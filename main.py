@@ -400,7 +400,7 @@ async def poll_results(closed_poll: types.Poll):
     else:
       text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option}</b> 👍'
       if(option4_votes!=0):
-        text1 = f'🤘 Также {option4_votes} человека хотели бы зайти на внеклассное чтение.'
+        text1 = f'🤘 Также {option4_votes} человек(-а) хотели бы зайти на внеклассное чтение.'
         text = text + '\n' + text1
       message = await bot.send_message(chat_id, text, parse_mode="HTML")
       pinned_message_id = message.message_id
@@ -443,8 +443,8 @@ async def polling_job(message: types.Message, silent_mode=False):
     await bot.send_message(chat_id, text, parse_mode="HTML")
 
 async def maintenance_job():
-  aioschedule.every().day.at('01:00').do(gpt_clear_all)
-  aioschedule.every().monday.at('01:01').do(unpin_poll_results)
+  aioschedule.every().day.at('22:00').do(gpt_clear_all)
+  aioschedule.every().monday.at('22:01').do(unpin_poll_results)
 
 @dp.message_handler(commands=['schedule_start'])
 async def schedule_start(message: types.Message):
