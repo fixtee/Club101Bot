@@ -164,7 +164,7 @@ async def truncate_conversation(chat_id: int):
     conversation_len = await get_conversation_len(chat_id)
     if conversation_len > truncate_limit and chat_id in conversations:
       now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-      print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Convestation size is {conversation_len} tokens, thus it will be truncated\033[0m")
+      print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Conversation size is {conversation_len} tokens, thus it will be truncated\033[0m")
       conversations[chat_id].pop(0) 
     else:
       break
