@@ -18,6 +18,7 @@ from aiogram.dispatcher.filters.state import State, StatesGroup
 bot = Bot(os.environ['bot_token'])
 bot.set_current(bot)
 openai.api_key = os.environ['openai_token']
+admin_chat_id = int(os.environ['admin_chat_id'])
 
 nest_asyncio.apply()
 storage = MemoryStorage()
@@ -46,6 +47,7 @@ temperature = 1
 agenda = []
 filename = 'saved_data.pkl'
 filedata = None
+
     
 @dp.message_handler(lambda message: not message.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
@@ -261,6 +263,10 @@ async def gpt_show_all(message: types.Message):
 
 @dp.message_handler(commands=['agenda_add'])
 async def agenda_add(message: types.Message):
+  error_code = await check_authority(message, 'agenda_add')
+  if error_code != 0:
+    return
+    
   await message.answer("С новой строки введите один или несколько пунктов для добавления в повестку заседания Клуба 101 или введите 'Нет' для прерывания команды...")
   await AgendaAdd.question1.set()
 
@@ -280,6 +286,10 @@ async def agenda_add_question1_handler(message: types.Message, state: FSMContext
 
 @dp.message_handler(commands=['agenda_delete'])
 async def agenda_delete(message: types.Message):
+  error_code = await check_authority(message, 'agenda_delete')
+  if error_code != 0:
+    return
+      
   global agenda
   if agenda != []:
     await agenda_show(message)
@@ -318,6 +328,10 @@ async def agenda_delete_question1_handler(message: types.Message, state: FSMCont
 
 @dp.message_handler(commands=['agenda_show'])
 async def agenda_show(message: types.Message):
+  error_code = await check_authority(message, 'agenda_show')
+  if error_code != 0:
+    return
+      
   global agenda
   mes = []
   if agenda != []:
@@ -334,6 +348,10 @@ async def agenda_show(message: types.Message):
   
 @dp.message_handler(commands=['agenda_clear'])
 async def agenda_clear(message: types.Message):
+  error_code = await check_authority(message, 'agenda_clear')
+  if error_code != 0:
+    return
+      
   global agenda
   agenda = []
   await file_write()
@@ -342,6 +360,10 @@ async def agenda_clear(message: types.Message):
   
 @dp.message_handler(commands=['send_poll_now'])
 async def send_poll(message: types.Message):
+  error_code = await check_authority(message, 'send_poll_now')
+  if error_code != 0:
+    return
+      
   global chat_id
   global poll_message
   global total_answers
@@ -357,13 +379,13 @@ async def send_poll(message: types.Message):
   days_until_saturday = (5 - now.weekday()) % 7
   sat_date = now.date() + datetime.timedelta(days=days_until_saturday)
   option2 = 'Суббота (' + sat_date.strftime('%d.%m.%Y') + ')'
-  option3 = 'Пропущу в этот раз 😢'
-  option4 = 'Зайду на внеклассное 😎'
+  option3 = 'Зайду на внеклассное 😎'
+  option4 = 'Пропущу в этот раз 😢'
   options = [option1, option2, option3, option4]
   poll_question = 'Когда состоится следующее заседание Клуба 101? 😤'
   waiting_time = 3600 #Время голосования в секундах
   poll_message = await bot.send_poll(chat_id, poll_question, options=options, is_anonymous=False, allows_multiple_answers=True)
-  text = '❗️Голосование длится максимум 1 час или до получения 3 голосов.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
+  text = '❗️Голосование длится максимум 1 час или до получения 4 голосов.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await message.answer(text, parse_mode="HTML")
   await asyncio.sleep(waiting_time)
   try:
@@ -379,28 +401,28 @@ async def poll_results(closed_poll: types.Poll):
   max_option = closed_poll.options[0].text
   max_votes = closed_poll.options[0].voter_count
   max_id = 0
-  option4_votes = 0
+  option3_votes = 0
   for i, option in enumerate(closed_poll.options):
     if option.voter_count > max_votes:
       max_option = option.text
       max_votes = option.voter_count
       max_id = i+1
-    if i==3:
-      option4_votes = option.voter_count
+    if i==2:
+      option3_votes = option.voter_count
   if max_votes == 1 or max_votes == 0:
     text = '❗️Голосование завершено. Решение не принято - слишком мало голосов 🤬'
     message = await bot.send_message(chat_id, text, parse_mode="HTML")
   else:
-    if max_id == 3:
+    if max_id == 4:
       text = '❗️Голосование завершено. Заседание на этой неделе не состоится - большинство не может участвовать 👎'
-      if(option4_votes!=0):
-        text1 = f'🤘 Однако {option4_votes} человека хотели бы зайти на внеклассное чтение.'
+      if(option3_votes!=0):
+        text1 = f'🤘 Однако, {option3_votes} человека хотели бы зайти на внеклассное чтение.'
         text = text + '\n' + text
       await bot.send_message(chat_id, text, parse_mode="HTML")
     else:
       text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option}</b> 👍'
-      if(option4_votes!=0):
-        text1 = f'🤘 Также {option4_votes} человек(-а) хотели бы зайти на внеклассное чтение.'
+      if(option3_votes!=0):
+        text1 = f'🤘 Также {option3_votes} человек(-а) хотели бы зайти на внеклассное чтение.'
         text = text + '\n' + text1
       message = await bot.send_message(chat_id, text, parse_mode="HTML")
       pinned_message_id = message.message_id
@@ -415,7 +437,7 @@ async def poll_answer(poll_answer: types.PollAnswer):
   global poll_status
   global total_answers
   total_answers += 1
-  if total_answers == 3:
+  if total_answers == 4:
     await bot.stop_poll(chat_id, poll_message.message_id)
     poll_is_closed = True
     total_answers = 0
@@ -453,7 +475,11 @@ async def schedule_start(message: types.Message):
   global chat_id
   
   if message.chat.type == types.ChatType.GROUP or message.chat.type == types.ChatType.SUPERGROUP:
-    chat_id = message.chat.id
+    if not chat_id:
+      chat_id = message.chat.id
+    error_code = await check_authority(message, 'schedule_start')
+    if error_code != 0:
+      return
     PollingJob = True
     JobActive = True
     await file_write()
@@ -464,6 +490,10 @@ async def schedule_start(message: types.Message):
 
 @dp.message_handler(commands=['schedule_check'])
 async def schedule_check(message: types.Message):
+  error_code = await check_authority(message, 'schedule_check')
+  if error_code != 0:
+    return
+      
   global PollingJob
   global JobActive
   if PollingJob:
@@ -483,6 +513,10 @@ async def schedule_check(message: types.Message):
     
 @dp.message_handler(commands=['schedule_stop'])
 async def schedule_stop(message: types.Message):
+  error_code = await check_authority(message, 'schedule_stop')
+  if error_code != 0:
+    return
+      
   global PollingJob
   PollingJob = False
   await file_write()
@@ -498,7 +532,18 @@ async def schedule_jobs(message: types.Message, silent_mode=False):
     asyncio.create_task(polling_job(message, silent_mode))
   if JobActive:
     asyncio.create_task(maintenance_job())
-    
+
+async def check_authority(message, command):
+  error_code = 0
+  commands = ['gpt_clear']
+  if command not in commands:
+    if (message.chat.type == types.ChatType.PRIVATE and message.from_user.id != admin_chat_id) or (message.chat.type != types.ChatType.PRIVATE and message.chat.id != chat_id):
+      text = "❗️Нет доступа к команде"
+      await bot.send_message(message.chat.id, text)
+      error_code = 4
+
+  return error_code
+  
 async def file_read():
   global filedata
   global filename
