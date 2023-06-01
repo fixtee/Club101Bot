@@ -52,9 +52,6 @@ filedata = None
 @dp.message_handler(lambda message: not message.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
   global conversations
-  global max_tokens
-  global temperature
-  global bot_details
   article_text = []
   url_yes = False
   parser_option = 1
@@ -379,7 +376,9 @@ async def send_poll(message: types.Message):
   days_until_saturday = (5 - now.weekday()) % 7
   sat_date = now.date() + datetime.timedelta(days=days_until_saturday)
   option2 = 'Суббота (' + sat_date.strftime('%d.%m.%Y') + ')'
-  option3 = 'Зайду на внеклассное 😎'
+  days_until_sunday = (6 - now.weekday()) % 7
+  sun_date = now.date() + datetime.timedelta(days=days_until_sunday)
+  option3 = 'Воскресенье (' + sun_date.strftime('%d.%m.%Y') + ')'
   option4 = 'Пропущу в этот раз 😢'
   options = [option1, option2, option3, option4]
   poll_question = 'Когда состоится следующее заседание Клуба 101? 😤'
@@ -401,29 +400,20 @@ async def poll_results(closed_poll: types.Poll):
   max_option = closed_poll.options[0].text
   max_votes = closed_poll.options[0].voter_count
   max_id = 0
-  option3_votes = 0
   for i, option in enumerate(closed_poll.options):
     if option.voter_count > max_votes:
       max_option = option.text
       max_votes = option.voter_count
       max_id = i+1
-    if i==2:
-      option3_votes = option.voter_count
   if max_votes == 1 or max_votes == 0:
     text = '❗️Голосование завершено. Решение не принято - слишком мало голосов 🤬'
     message = await bot.send_message(chat_id, text, parse_mode="HTML")
   else:
     if max_id == 4:
       text = '❗️Голосование завершено. Заседание на этой неделе не состоится - большинство не может участвовать 👎'
-      if(option3_votes!=0):
-        text1 = f'🤘 Однако, {option3_votes} человека хотели бы зайти на внеклассное чтение.'
-        text = text + '\n' + text
       await bot.send_message(chat_id, text, parse_mode="HTML")
     else:
       text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option}</b> 👍'
-      if(option3_votes!=0):
-        text1 = f'🤘 Также {option3_votes} человек(-а) хотели бы зайти на внеклассное чтение.'
-        text = text + '\n' + text1
       message = await bot.send_message(chat_id, text, parse_mode="HTML")
       pinned_message_id = message.message_id
       await bot.pin_chat_message(chat_id=chat_id, message_id=pinned_message_id)
@@ -434,7 +424,6 @@ async def poll_results(closed_poll: types.Poll):
 async def poll_answer(poll_answer: types.PollAnswer):
   global chat_id
   global poll_is_closed
-  global poll_status
   global total_answers
   total_answers += 1
   if total_answers == 4:
