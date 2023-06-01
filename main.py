@@ -360,6 +360,11 @@ async def send_poll(message: types.Message):
   error_code = await check_authority(message, 'send_poll_now')
   if error_code != 0:
     return
+    
+  if message.chat.type == types.ChatType.PRIVATE:
+    text = '❗️Запуск голосования возможен только из группового чата'
+    await bot.send_message(message.chat.id, text, parse_mode="HTML")
+    return
       
   global chat_id
   global poll_message
