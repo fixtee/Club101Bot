@@ -534,8 +534,6 @@ async def check_authority(message, command):
   return error_code
   
 async def file_read():
-  global filedata
-  global filename
   global JobActive
   global PollingJob
   global pinned_message_id
