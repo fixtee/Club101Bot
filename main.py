@@ -487,9 +487,7 @@ async def schedule_check(message: types.Message):
   error_code = await check_authority(message, 'schedule_check')
   if error_code != 0:
     return
-      
-  global PollingJob
-  global JobActive
+
   if PollingJob:
     text = '❗️Опрос по расписанию активен'
     moscow_tz = pytz.timezone('Europe/Moscow')
@@ -519,8 +517,6 @@ async def schedule_stop(message: types.Message):
   await message.answer(text, parse_mode="HTML")
 
 async def schedule_jobs(message: types.Message, silent_mode=False):
-  global PollingJob
-  global JobActive
   aioschedule.clear()
   if PollingJob:
     asyncio.create_task(polling_job(message, silent_mode))
@@ -535,7 +531,6 @@ async def check_authority(message, command):
       text = "❗️Нет доступа к команде"
       await bot.send_message(message.chat.id, text)
       error_code = 4
-
   return error_code
   
 async def file_read():
@@ -559,15 +554,6 @@ async def file_read():
     conversations = filedata["conversations"]
 
 async def file_write():
-  global filedata
-  global filename
-  global JobActive
-  global PollingJob
-  global pinned_message_id
-  global chat_id
-  global agenda
-  global conversations
-  
   if os.path.exists(filename):
     filedata = {"JobActive": JobActive,
                 "PollingJob": PollingJob,
@@ -579,9 +565,6 @@ async def file_write():
       pickle.dump(filedata, f)
 
 async def file_init():
-  global filedata
-  global filename
-  
   if os.path.exists(filename) and os.path.getsize(filename) == 0:
     filedata = {"JobActive": False,
                 "PollingJob": False,
