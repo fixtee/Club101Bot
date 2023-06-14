@@ -123,7 +123,8 @@ async def default_message_handler(message: types.Message, role: str="user"):
   max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
   try:
     completion = openai.ChatCompletion.create(
-      model="gpt-3.5-turbo",
+      #model="gpt-3.5-turbo",
+      model="gpt-3.5-turbo-0613",
       messages=conversations[message.chat.id],
       max_tokens=max_tokens_chat,
       temperature=temperature,
@@ -171,8 +172,7 @@ async def truncate_conversation(chat_id: int):
 async def get_conversation_len(chat_id: int) -> int:
   global conversations
   tiktoken.model.MODEL_TO_ENCODING["gpt-4"] = "cl100k_base"
-  #encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo-0613")
+  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
   num_tokens = 0
   for msg in conversations[chat_id]:
     # every message follows <im_start>{role/name}\n{content}<im_end>\n
