@@ -171,7 +171,8 @@ async def truncate_conversation(chat_id: int):
 async def get_conversation_len(chat_id: int) -> int:
   global conversations
   tiktoken.model.MODEL_TO_ENCODING["gpt-4"] = "cl100k_base"
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  #encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo-0613")
   num_tokens = 0
   for msg in conversations[chat_id]:
     # every message follows <im_start>{role/name}\n{content}<im_end>\n
