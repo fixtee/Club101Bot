@@ -437,8 +437,7 @@ async def poll_answer(poll_answer: types.PollAnswer):
     poll_is_closed = True
     total_answers = 0
 
-@dp.message_handler(commands=['unpin'])
-async def unpin_poll_results(message: types.Message=None):
+async def unpin_poll_results():
   global chat_id
   global pinned_message_id
   if pinned_message_id != 0:
@@ -462,7 +461,7 @@ async def polling_job(message: types.Message, silent_mode=False):
 
 async def maintenance_job():
   aioschedule.every().day.at('22:00').do(gpt_clear_all)
-  aioschedule.every().monday.at('22:01').do(unpin_poll_results)
+  aioschedule.every().sunday.at('22:01').do(unpin_poll_results)
 
 @dp.message_handler(commands=['schedule_start'])
 async def schedule_start(message: types.Message):
