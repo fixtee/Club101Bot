@@ -437,7 +437,8 @@ async def poll_answer(poll_answer: types.PollAnswer):
     poll_is_closed = True
     total_answers = 0
 
-async def unpin_poll_results():
+@dp.message_handler(commands=['unpin'])
+async def unpin_poll_results(message: types.Message=None):
   global chat_id
   global pinned_message_id
   if pinned_message_id != 0:
