@@ -58,7 +58,7 @@ async def default_message_handler(message: types.Message, role: str="user"):
   orig_url = False
 
   if (message.chat.type == types.ChatType.GROUP or message.chat.type == types.ChatType.SUPERGROUP) and role != "system":
-    if bot_details.username in message.text:
+    if f'@{bot_details.username}' in message.text:
       content = message.text.replace(f'@{bot_details.username}', '').strip()
     else:
       return
