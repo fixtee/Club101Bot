@@ -389,7 +389,7 @@ async def send_poll(message: types.Message):
   poll_question = 'Когда состоится следующее заседание Клуба 101? 😤'
   waiting_time = 3600 #Время голосования в секундах
   poll_message = await bot.send_poll(chat_id, poll_question, options=options, is_anonymous=False, allows_multiple_answers=True)
-  text = '❗️Голосование длится максимум 1 час или до получения 4 голосов.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
+  text = '❗️Голосование длится максимум 1 час или до получения 6 голосов.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await message.answer(text, parse_mode="HTML")
   await asyncio.sleep(waiting_time)
   try:
@@ -402,23 +402,37 @@ async def poll_results(closed_poll: types.Poll):
   global chat_id
   global pinned_message_id
   message = types.Message(chat=types.Chat(id=chat_id))
-  max_option = closed_poll.options[0].text
-  max_votes = closed_poll.options[0].voter_count
-  max_id = 0
+  max_option_1 = closed_poll.options[0].text
+  max_votes_1 = closed_poll.options[0].voter_count
+  max_id_1 = 0
+  max_option_2 = closed_poll.options[0].text
+  max_votes_2 = closed_poll.options[0].voter_count
+  max_id_2 = 0  
   for i, option in enumerate(closed_poll.options):
     if option.voter_count > max_votes:
-      max_option = option.text
-      max_votes = option.voter_count
-      max_id = i+1
-  if max_votes == 1 or max_votes == 0:
+      max_option_2 = max_option_1
+      max_votes_2 = max_votes_1
+      max_id_2 = max_id_1
+      max_option_1 = option.text
+      max_votes_1 = option.voter_count
+      max_id_1 = i+1
+  if max_votes_1 < 2:
     text = '❗️Голосование завершено. Решение не принято - слишком мало голосов 🤬'
     message = await bot.send_message(chat_id, text, parse_mode="HTML")
   else:
-    if max_id == 4:
-      text = '❗️Голосование завершено. Заседание на этой неделе не состоится - большинство не может участвовать 👎'
-      await bot.send_message(chat_id, text, parse_mode="HTML")
+    if max_id_1 == 4:
+      if max_id_2 != max_id_1 and max_votes_2 > 1:
+        text = f'❗️Голосование завершено. Большинство решили слиться, но заседание на этой неделе все же состоится в <b>{max_option_2}</b> 👍'
+        message = await bot.send_message(chat_id, text, parse_mode="HTML")
+        pinned_message_id = message.message_id
+        await bot.pin_chat_message(chat_id=chat_id, message_id=pinned_message_id)
+        await file_write()
+        await agenda_show(message)
+      else:
+        text = '❗️Голосование завершено. Заседание на этой неделе не состоится - большинство не может участвовать 👎'
+        await bot.send_message(chat_id, text, parse_mode="HTML")
     else:
-      text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option}</b> 👍'
+      text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option_1}</b> 👍'
       message = await bot.send_message(chat_id, text, parse_mode="HTML")
       pinned_message_id = message.message_id
       await bot.pin_chat_message(chat_id=chat_id, message_id=pinned_message_id)
@@ -431,7 +445,7 @@ async def poll_answer(poll_answer: types.PollAnswer):
   global poll_is_closed
   global total_answers
   total_answers += 1
-  if total_answers == 4:
+  if total_answers == 6:
     await bot.stop_poll(chat_id, poll_message.message_id)
     poll_is_closed = True
     total_answers = 0
