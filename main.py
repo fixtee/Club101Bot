@@ -409,7 +409,7 @@ async def poll_results(closed_poll: types.Poll):
   max_votes_2 = closed_poll.options[0].voter_count
   max_id_2 = 0  
   for i, option in enumerate(closed_poll.options):
-    if option.voter_count > max_votes:
+    if option.voter_count > max_votes_1:
       max_option_2 = max_option_1
       max_votes_2 = max_votes_1
       max_id_2 = max_id_1
