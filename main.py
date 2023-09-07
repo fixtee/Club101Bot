@@ -19,6 +19,7 @@ bot = Bot(os.environ['bot_token'])
 bot.set_current(bot)
 openai.api_key = os.environ['openai_token']
 admin_chat_id = int(os.environ['admin_chat_id'])
+FactActive = int(os.environ['fact_job'])
 
 nest_asyncio.apply()
 storage = MemoryStorage()
@@ -159,6 +160,51 @@ async def default_message_handler(message: types.Message, role: str="user"):
     text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
     await message.answer(text, parse_mode="HTML")
 
+@dp.message_handler(commands=['get_a_fact'])
+async def get_a_fact(message: types.Message):
+  global conversations
+  content = "Расскажи интересный факт. Отвечай со слов 'Интересный факт.'"
+  if message.chat.id not in conversations:
+    conversations[message.chat.id] = []
+  conversations[message.chat.id].append({"role": "user", "content": content})
+  await truncate_conversation(message.chat.id)
+  
+  max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
+  try:
+    completion = openai.ChatCompletion.create(
+      model="gpt-3.5-turbo",
+      messages=conversations[message.chat.id],
+      max_tokens=max_tokens_chat,
+      temperature=temperature,
+      )
+  except (
+      openai.error.APIError,
+      openai.error.APIConnectionError,
+      openai.error.AuthenticationError,
+      openai.error.InvalidAPIType,
+      openai.error.InvalidRequestError,
+      openai.error.OpenAIError,
+      openai.error.PermissionError,
+      openai.error.PermissionError,
+      openai.error.RateLimitError,
+      openai.error.ServiceUnavailableError,
+      openai.error.SignatureVerificationError,
+      openai.error.Timeout,
+      openai.error.TryAgain,
+  ) as e:
+    print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
+    pass  
+    
+  gpt_finish_reason = completion.choices[0].finish_reason
+  if gpt_finish_reason.lower() == 'stop':
+    gpt_response = completion.choices[0].message.content
+    await message.reply(gpt_response)
+    conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
+    await file_write()
+  else: 
+    text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
+    await message.answer(text, parse_mode="HTML")
+    
 async def truncate_conversation(chat_id: int):
   global conversations
   global truncate_limit
@@ -493,6 +539,9 @@ async def polling_job(message: types.Message, silent_mode=False):
     text += f'\nСледующий опрос состоится <b>{time_str} MSK</b>'
     await bot.send_message(chat_id, text, parse_mode="HTML")
 
+async def fact_job(message: types.Message):
+  aioschedule.every().day.at('21:28').do(get_a_fact, message=message)
+
 async def maintenance_job():
   aioschedule.every().day.at('22:00').do(gpt_clear_all)
   aioschedule.every().sunday.at('22:01').do(unpin_poll_results)
@@ -557,6 +606,8 @@ async def schedule_jobs(message: types.Message, silent_mode=False):
     asyncio.create_task(polling_job(message, silent_mode))
   if JobActive:
     asyncio.create_task(maintenance_job())
+  if FactActive == 1:
+    asyncio.create_task(fact_job(message))
 
 async def check_authority(message, command):
   error_code = 0
