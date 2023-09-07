@@ -37,6 +37,9 @@ chat_id = 0
 poll_message = None
 pinned_message_id = 0
 total_answers = 0
+opt1 = 0
+opt2 = 0
+opt3 = 0
 PollingJob = False
 JobActive = False
 bot_details = None
@@ -370,6 +373,9 @@ async def send_poll(message: types.Message):
   global poll_message
   global total_answers
   total_answers = 0
+  opt1 = 0      
+  opt2 = 0
+  opt3 = 0  
   if chat_id == 0 and message.chat.id != 0:
     chat_id = message.chat.id
   await unpin_poll_results()
@@ -387,9 +393,9 @@ async def send_poll(message: types.Message):
   option4 = 'Пропущу в этот раз 😢'
   options = [option1, option2, option3, option4]
   poll_question = 'Когда состоится следующее заседание Клуба 101? 😤'
-  waiting_time = 3600 #Время голосования в секундах
+  waiting_time = 11*3600 #Время голосования в секундах
   poll_message = await bot.send_poll(chat_id, poll_question, options=options, is_anonymous=False, allows_multiple_answers=True)
-  text = '❗️Голосование длится максимум 1 час или до получения 6 голосов.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
+  text = '❗️Голосование длится до 23:00 или до получения 4 голосов за один вариант (кроме последнего).\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await message.answer(text, parse_mode="HTML")
   await asyncio.sleep(waiting_time)
   try:
@@ -442,13 +448,28 @@ async def poll_results(closed_poll: types.Poll):
 @dp.poll_answer_handler(lambda poll_answer: True)
 async def poll_answer(poll_answer: types.PollAnswer):
   global chat_id
-  global poll_is_closed
   global total_answers
+  global opt1
+  global opt2
+  global opt3
   total_answers += 1
-  if total_answers == 6:
+  if total_answers == 7:
     await bot.stop_poll(chat_id, poll_message.message_id)
-    poll_is_closed = True
     total_answers = 0
+  else:
+    for i, opt_id in enumerate(poll_answer.option_ids):
+      print(opt_id)
+      if opt_id == 0:
+        opt1 += 1
+      elif opt_id == 1:
+        opt2 += 1
+      elif opt_id == 2:
+        opt3 += 1
+    if opt1 == 4 or opt2 == 4 or opt3 == 4:
+      await bot.stop_poll(chat_id, poll_message.message_id)
+      opt1 = 0      
+      opt2 = 0
+      opt3 = 0
 
 async def unpin_poll_results():
   global chat_id
