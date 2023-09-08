@@ -540,7 +540,7 @@ async def polling_job(message: types.Message, silent_mode=False):
     await bot.send_message(chat_id, text, parse_mode="HTML")
 
 async def fact_job(message: types.Message):
-  aioschedule.every().day.at('21:28').do(get_a_fact, message=message)
+  aioschedule.every().day.at('13:00').do(get_a_fact, message=message)
 
 async def maintenance_job():
   aioschedule.every().day.at('22:00').do(gpt_clear_all)
