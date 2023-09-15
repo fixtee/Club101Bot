@@ -35,7 +35,7 @@ class AgendaDelete(StatesGroup):
   
 dp = Dispatcher(bot, storage=storage)
 chat_id = 0
-poll_message = None
+poll_message_id = 0
 pinned_message_id = 0
 total_answers = 0
 opt1 = 0
@@ -416,15 +416,18 @@ async def send_poll(message: types.Message):
     return
       
   global chat_id
-  global poll_message
+  global poll_message_id
   global total_answers
+  global opt1
+  global opt2
+  global opt3
   total_answers = 0
-  opt1 = 0      
+  opt1 = 0
   opt2 = 0
   opt3 = 0  
   if chat_id == 0 and message.chat.id != 0:
     chat_id = message.chat.id
-  await unpin_poll_results()
+  await unpin_poll_results(silent_mode=True)
   moscow_tz = pytz.timezone('Europe/Moscow')
   now = datetime.datetime.now(moscow_tz)
   days_until_friday = (4 - now.weekday()) % 7
@@ -439,27 +442,41 @@ async def send_poll(message: types.Message):
   option4 = 'Пропущу в этот раз 😢'
   options = [option1, option2, option3, option4]
   poll_question = 'Когда состоится следующее заседание Клуба 101? 😤'
-  waiting_time = 11*3600 #Время голосования в секундах
   poll_message = await bot.send_poll(chat_id, poll_question, options=options, is_anonymous=False, allows_multiple_answers=True)
-  text = '❗️Голосование длится до 23:00 или до получения 4 голосов за один вариант (кроме последнего).\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
+  poll_message_id = poll_message.message_id
+  await file_write()
+  await bot.pin_chat_message(chat_id=chat_id, message_id=poll_message_id)
+  text = '❗️Голосование длится до 23:00 или до получения 4 голосов за один из вариантов кроме последнего.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await message.answer(text, parse_mode="HTML")
-  await asyncio.sleep(waiting_time)
-  try:
-    await bot.stop_poll(chat_id, poll_message.message_id)
-  except aiogram.utils.exceptions.PollHasAlreadyBeenClosed:
-    pass
+  await wait_for_poll_stop()
+
+async def wait_for_poll_stop():
+    moscow_tz = pytz.timezone('Europe/Moscow')
+    now = datetime.datetime.now(moscow_tz)
+    target_time = now.replace(hour=15, minute=00, second=0, microsecond=0)  #CHANGE BEFORE GO_LIVE##########
+    time_until_poll_stop = (target_time - now).total_seconds()   
+    if time_until_poll_stop> 0:
+      await asyncio.sleep(time_until_poll_stop)
+    try:
+      await bot.stop_poll(chat_id, poll_message_id)
+    except aiogram.utils.exceptions.PollHasAlreadyBeenClosed:
+      pass
 
 @dp.poll_handler(lambda closed_poll: closed_poll.is_closed is True)
 async def poll_results(closed_poll: types.Poll):
-  global chat_id
   global pinned_message_id
+  global poll_message_id
   message = types.Message(chat=types.Chat(id=chat_id))
   max_option_1 = closed_poll.options[0].text
   max_votes_1 = closed_poll.options[0].voter_count
   max_id_1 = 0
   max_option_2 = closed_poll.options[0].text
   max_votes_2 = closed_poll.options[0].voter_count
-  max_id_2 = 0  
+  max_id_2 = 0
+  if poll_message_id != 0:
+    await bot.unpin_chat_message(chat_id=chat_id, message_id=poll_message_id)
+    poll_message_id = 0
+    await file_write()
   for i, option in enumerate(closed_poll.options):
     if option.voter_count > max_votes_1:
       max_option_2 = max_option_1
@@ -484,7 +501,10 @@ async def poll_results(closed_poll: types.Poll):
         text = '❗️Голосование завершено. Заседание на этой неделе не состоится - большинство не может участвовать 👎'
         await bot.send_message(chat_id, text, parse_mode="HTML")
     else:
-      text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option_1}</b> 👍'
+      if max_votes_1 == max_votes_2 and max_id_1 != max_id_2:
+        text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option_2}</b> и в <b>{max_option_1}</b>👍'
+      else:
+        text = f'❗️Голосование завершено. Заседание на этой неделе состоится в <b>{max_option_1}</b> 👍'
       message = await bot.send_message(chat_id, text, parse_mode="HTML")
       pinned_message_id = message.message_id
       await bot.pin_chat_message(chat_id=chat_id, message_id=pinned_message_id)
@@ -500,11 +520,13 @@ async def poll_answer(poll_answer: types.PollAnswer):
   global opt3
   total_answers += 1
   if total_answers == 7:
-    await bot.stop_poll(chat_id, poll_message.message_id)
+    await bot.stop_poll(chat_id, poll_message_id)
     total_answers = 0
+    opt1 = 0      
+    opt2 = 0
+    opt3 = 0
   else:
     for i, opt_id in enumerate(poll_answer.option_ids):
-      print(opt_id)
       if opt_id == 0:
         opt1 += 1
       elif opt_id == 1:
@@ -512,23 +534,30 @@ async def poll_answer(poll_answer: types.PollAnswer):
       elif opt_id == 2:
         opt3 += 1
     if opt1 == 4 or opt2 == 4 or opt3 == 4:
-      await bot.stop_poll(chat_id, poll_message.message_id)
+      await bot.stop_poll(chat_id, poll_message_id)
+      total_answers = 0
       opt1 = 0      
       opt2 = 0
       opt3 = 0
 
-async def unpin_poll_results():
-  global chat_id
+async def unpin_poll_results(silent_mode=False):
   global pinned_message_id
   if pinned_message_id != 0:
     await bot.unpin_chat_message(chat_id=chat_id, message_id=pinned_message_id)
     pinned_message_id = 0
+    await file_write()
   now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-  print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'unpin_poll_results' is completed\033[0m")
+  if not silent_mode:
+    print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'unpin_poll_results' is completed\033[0m")
+
+async def polling_reminder():
+  if poll_message_id != 0:
+    text = '🫵 А ты уже проголосовал за дату следующего заседания Клуба 101? Ссылка в закрепе 👆'
+    await bot.send_message(chat_id, text, parse_mode="HTML")
   
 async def polling_job(message: types.Message, silent_mode=False):
   aioschedule.every().thursday.at('09:00').do(send_poll, message=message)
-  global chat_id
+  aioschedule.every().thursday.at('17:00').do(polling_reminder) 
   
   if not silent_mode:
     text = '❗️Опрос по расписанию запущен 💪'
@@ -608,6 +637,8 @@ async def schedule_jobs(message: types.Message, silent_mode=False):
     asyncio.create_task(maintenance_job())
   if FactActive == 1:
     asyncio.create_task(fact_job(message))
+  if poll_message_id != 0:
+    asyncio.create_task(wait_for_poll_stop())
 
 async def check_authority(message, command):
   error_code = 0
@@ -623,6 +654,11 @@ async def file_read():
   global JobActive
   global PollingJob
   global pinned_message_id
+  global poll_message_id
+  global total_answers
+  global opt1
+  global opt2
+  global opt3
   global chat_id
   global agenda
   global conversations
@@ -633,6 +669,11 @@ async def file_read():
     JobActive = filedata["JobActive"]
     PollingJob = filedata["PollingJob"]
     pinned_message_id = filedata["pinned_message_id"]
+    poll_message_id = filedata["poll_message_id"]
+    total_answers = filedata["total_answers"]
+    opt1 = filedata["opt1"]
+    opt2 = filedata["opt2"]
+    opt3 = filedata["opt3"]
     chat_id = filedata["chat_id"]
     agenda = filedata["agenda"]
     conversations = filedata["conversations"]
@@ -642,6 +683,11 @@ async def file_write():
     filedata = {"JobActive": JobActive,
                 "PollingJob": PollingJob,
                 "pinned_message_id": pinned_message_id,
+                "poll_message_id": poll_message_id,
+                "total_answers": total_answers,
+                "opt1": opt1,
+                "opt2": opt2,
+                "opt3": opt3,
                 "chat_id": chat_id,
                 "agenda": agenda,
                 "conversations": conversations}
@@ -653,6 +699,11 @@ async def file_init():
     filedata = {"JobActive": False,
                 "PollingJob": False,
                 "pinned_message_id": 0,
+                "poll_message_id": 0,
+                "total_answers": 0,
+                "opt1": 0,
+                "opt2": 0,
+                "opt3": 0,
                 "chat_id": 0,
                 "agenda": [],
                 "conversations": {}}
