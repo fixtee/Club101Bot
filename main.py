@@ -446,14 +446,15 @@ async def send_poll(message: types.Message):
   poll_message_id = poll_message.message_id
   await file_write()
   await bot.pin_chat_message(chat_id=chat_id, message_id=poll_message_id)
-  text = '❗️Голосование длится до 23:00 или до получения 4 голосов за один из вариантов кроме последнего.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
+  end_hour = 23
+  text = f'❗️Голосование длится до {end_hour}:00 или до получения 4 голосов за один из вариантов кроме последнего.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await message.answer(text, parse_mode="HTML")
   await wait_for_poll_stop()
 
 async def wait_for_poll_stop():
     moscow_tz = pytz.timezone('Europe/Moscow')
     now = datetime.datetime.now(moscow_tz)
-    target_time = now.replace(hour=15, minute=00, second=0, microsecond=0)  #CHANGE BEFORE GO_LIVE##########
+    target_time = now.replace(hour=end_hour, minute=0, second=0, microsecond=0)
     time_until_poll_stop = (target_time - now).total_seconds()   
     if time_until_poll_stop> 0:
       await asyncio.sleep(time_until_poll_stop)
