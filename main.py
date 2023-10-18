@@ -7,6 +7,7 @@ import nest_asyncio
 import openai
 import pickle
 import tiktoken
+import random
 import aiogram.utils.exceptions
 from background import keep_alive
 from aiogram import Bot, Dispatcher, types
@@ -20,6 +21,7 @@ bot.set_current(bot)
 openai.api_key = os.environ['openai_token']
 admin_chat_id = int(os.environ['admin_chat_id'])
 FactActive = int(os.environ['fact_job'])
+reply_probability = float(os.environ['reply_probability'])
 
 nest_asyncio.apply()
 storage = MemoryStorage()
@@ -56,21 +58,42 @@ filedata = None
     
 @dp.message_handler(lambda message: not message.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
-  global conversations
   article_text = []
   url_yes = False
   parser_option = 1
   orig_url = False
 
-  if (message.chat.type == types.ChatType.GROUP or message.chat.type == types.ChatType.SUPERGROUP) and role != "system":
+  if message.chat.type != types.ChatType.PRIVATE and role != "system":
     if f'@{bot_details.username}' in message.text:
       content = message.text.replace(f'@{bot_details.username}', '').strip()
+    elif message.reply_to_message and message.reply_to_message.from_user.username == bot_details.username:
+      content = message.text
+    elif random.random() <= reply_probability:
+      responses = [
+          "Усомнись в данном сообщении\n",
+          "Вырази случайное мнение по поводу данного сообщения\n",
+          "Задайся вопросом по поводу данного сообщения, ответ на который не содержится в самом сообщении\n",
+          "Сформулируй критическое мнение по данному сообщению\n",
+          "Расскажи что-то еще интересное по теме из данного сообщения\n",
+      ]
+      content = random.choice(responses)
+      if message.text:
+        content += message.text
+      if message.caption:
+        content += message.caption
+      if message.reply_to_message:
+        if message.reply_to_message.text:
+          content += message.reply_to_message.text
+        if message.reply_to_message.caption:
+          content += message.reply_to_message.caption
+
+      await typing(message.chat.id)
+      await ask_chatGPT(message, content, "user")
+      return
     else:
       return
   else:
     content = message.text
-
-  await typing(message.chat.id)
   
   if message.entities is not None:
     for entity in message.entities:
@@ -119,7 +142,12 @@ async def default_message_handler(message: types.Message, role: str="user"):
     text = f'❗️Длина запроса {prompt_len} токенов > максимальной длины разговора {max_tokens}'
     await message.answer(text, parse_mode="HTML")
     return
-         
+    
+  await typing(message.chat.id)
+  await ask_chatGPT(message, content, role)
+
+async def ask_chatGPT(message: types.Message, content, role):
+  global conversations
   if message.chat.id not in conversations:
     conversations[message.chat.id] = []
   conversations[message.chat.id].append({"role": role, "content": content})
@@ -159,53 +187,13 @@ async def default_message_handler(message: types.Message, role: str="user"):
     await file_write()
   else: 
     text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
-    await message.answer(text, parse_mode="HTML")
+    await message.answer(text)
 
 @dp.message_handler(commands=['get_a_fact'])
 async def get_a_fact(message: types.Message):
-  global conversations
-  content = "Расскажи интересный факт. Отвечай со слов 'Интересный факт.'"
-  if message.chat.id not in conversations:
-    conversations[message.chat.id] = []
-  conversations[message.chat.id].append({"role": "user", "content": content})
-  await truncate_conversation(message.chat.id)
-  
-  max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
-  try:
-    completion = openai.ChatCompletion.create(
-      model="gpt-3.5-turbo",
-      messages=conversations[message.chat.id],
-      max_tokens=max_tokens_chat,
-      temperature=temperature,
-      )
-  except (
-      openai.error.APIError,
-      openai.error.APIConnectionError,
-      openai.error.AuthenticationError,
-      openai.error.InvalidAPIType,
-      openai.error.InvalidRequestError,
-      openai.error.OpenAIError,
-      openai.error.PermissionError,
-      openai.error.PermissionError,
-      openai.error.RateLimitError,
-      openai.error.ServiceUnavailableError,
-      openai.error.SignatureVerificationError,
-      openai.error.Timeout,
-      openai.error.TryAgain,
-  ) as e:
-    print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
-    pass  
-    
-  gpt_finish_reason = completion.choices[0].finish_reason
-  if gpt_finish_reason.lower() == 'stop':
-    gpt_response = completion.choices[0].message.content
-    await message.reply(gpt_response)
-    conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
-    await file_write()
-  else: 
-    text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
-    await message.answer(text, parse_mode="HTML")
-    
+  content = "Расскажи интересный факт, начав ответ со слов 'Интересный факт' только для этого запроса."
+  await ask_chatGPT(message, content, "user")
+ 
 async def truncate_conversation(chat_id: int):
   global conversations
   global truncate_limit
@@ -582,7 +570,7 @@ async def schedule_start(message: types.Message):
   global JobActive
   global chat_id
   
-  if message.chat.type == types.ChatType.GROUP or message.chat.type == types.ChatType.SUPERGROUP:
+  if message.chat.type != types.ChatType.PRIVATE:
     if not chat_id:
       chat_id = message.chat.id
     error_code = await check_authority(message, 'schedule_start')
