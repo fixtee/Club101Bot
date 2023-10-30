@@ -458,10 +458,10 @@ async def poll_results(closed_poll: types.Poll):
   message = types.Message(chat=types.Chat(id=chat_id))
   max_option_1 = closed_poll.options[0].text
   max_votes_1 = closed_poll.options[0].voter_count
-  max_id_1 = 0
+  max_id_1 = 1
   max_option_2 = closed_poll.options[0].text
   max_votes_2 = closed_poll.options[0].voter_count
-  max_id_2 = 0
+  max_id_2 = 1
   if poll_message_id != 0:
     await bot.unpin_chat_message(chat_id=chat_id, message_id=poll_message_id)
     poll_message_id = 0
@@ -508,7 +508,7 @@ async def poll_answer(poll_answer: types.PollAnswer):
   global opt2
   global opt3
   total_answers += 1
-  if total_answers == 7:
+  if total_answers == 9:
     await bot.stop_poll(chat_id, poll_message_id)
     total_answers = 0
     opt1 = 0      
