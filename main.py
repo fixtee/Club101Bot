@@ -75,8 +75,10 @@ async def default_message_handler(message: types.Message, role: str="user"):
           "Задайся вопросом по поводу данного сообщения, ответ на который не содержится в самом сообщении\n",
           "Сформулируй критическое мнение по данному сообщению\n",
           "Расскажи что-то еще интересное по теме из данного сообщения\n",
+          "Расскажи забавный факт по теме из данного сообщения\n",
       ]
       content = random.choice(responses)
+      await gpt_clear(message, True)
       if message.text:
         content += message.text
       if message.caption:
