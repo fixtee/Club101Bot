@@ -193,7 +193,8 @@ async def ask_chatGPT(message: types.Message, content, role):
 
 @dp.message_handler(commands=['get_a_fact'])
 async def get_a_fact(message: types.Message):
-  content = "Расскажи интересный факт, начав ответ со слов 'Интересный факт' только для этого запроса."
+  await gpt_clear(message, True)
+  content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
   await ask_chatGPT(message, content, "user")
  
 async def truncate_conversation(chat_id: int):
