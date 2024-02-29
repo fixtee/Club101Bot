@@ -24,7 +24,7 @@ def run():
     
 def keep_alive():
 
-  Dev = False
+  Dev = True
 
   if not Dev:
     now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))

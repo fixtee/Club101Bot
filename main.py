@@ -4,27 +4,18 @@ import pytz
 import datetime
 import aioschedule
 import nest_asyncio
-import openai
 import pickle
-import tiktoken
+import logging
+import openai
 import random
-import aiogram.utils.exceptions
-from background import keep_alive
-from aiogram import Bot, Dispatcher, types
-from parser import url_article_parser, get_parser_params
-from aiogram.contrib.fsm_storage.memory import MemoryStorage
-from aiogram.dispatcher import FSMContext
-from aiogram.dispatcher.filters.state import State, StatesGroup
-
-bot = Bot(os.environ['bot_token'])
-bot.set_current(bot)
-openai.api_key = os.environ['openai_token']
-admin_chat_id = int(os.environ['admin_chat_id'])
-FactActive = int(os.environ['fact_job'])
-reply_probability = float(os.environ['reply_probability'])
-
-nest_asyncio.apply()
-storage = MemoryStorage()
+import tiktoken
+import aiogram.exceptions
+from aiogram import Bot, Dispatcher, types, enums
+from url_parser import url_article_parser, get_parser_params
+from aiogram.filters import Command
+from aiogram.utils.chat_action import ChatActionSender
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
 
 class GPTSystem(StatesGroup):
   question1 = State()
@@ -34,8 +25,24 @@ class AgendaAdd(StatesGroup):
 
 class AgendaDelete(StatesGroup):
   question1 = State()
-  
-dp = Dispatcher(bot, storage=storage)
+
+nest_asyncio.apply()
+
+logfile = "journal.log"
+logging.basicConfig(
+    filename=logfile,
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    )
+
+bot = Bot(token=os.environ['bot_token'])
+dp = Dispatcher()
+
+openai_client = openai.AsyncOpenAI(api_key=os.environ['openai_token'])
+admin_chat_id = int(os.environ['admin_chat_id'])
+FactActive = int(os.environ['fact_job'])
+reply_probability = float(os.environ['reply_probability'])
+
 chat_id = 0
 poll_message_id = 0
 pinned_message_id = 0
@@ -54,16 +61,262 @@ agenda = []
 end_hour = 23
 filename = 'saved_data.pkl'
 filedata = None
+chat_type = ''
 
+@dp.message(Command('get_a_fact'))
+async def get_a_fact(message: types.Message):
+  await gpt_clear(message, True)
+  content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
+  await ask_chatGPT(message, content, "user")
+
+async def ask_chatGPT(message: types.Message, content, role):
+  global conversations
+  if message.chat.id not in conversations:
+    conversations[message.chat.id] = []
+  conversations[message.chat.id].append({"role": role, "content": content})
+  await truncate_conversation(message.chat.id)
+  
+  max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
+  try:
+    completion = await openai_client.chat.completions.create(
+      model="gpt-3.5-turbo-0125",
+      messages=conversations[message.chat.id],
+      max_tokens=max_tokens_chat,
+      temperature=temperature,
+      )
+  except (
+      openai.APIConnectionError,
+      openai.APIError,
+      openai.APIResponseValidationError,
+      openai.APITimeoutError,
+      openai.APIResponseValidationError,
+      openai.APIStatusError,
+      openai.AuthenticationError,
+      openai.BadRequestError,
+      openai.ConflictError,
+      openai.InternalServerError,      
+      openai.NotFoundError,
+      openai.OpenAIError,      
+      openai.PermissionDeniedError,      
+      openai.RateLimitError,
+      openai.UnprocessableEntityError,
+  ) as e:
+    #print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
+    logging.error(f"OpenAI API error: {e}")
+    pass  
     
-@dp.message_handler(lambda message: not message.text.startswith('/'))
+  gpt_finish_reason = completion.choices[0].finish_reason
+  if gpt_finish_reason.lower() == 'stop':
+    gpt_response = completion.choices[0].message.content
+    await message.reply(gpt_response)
+    conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
+    await file_write()
+  else: 
+    text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
+    await message.answer(text)
+
+async def truncate_conversation(chat_id: int):
+  global conversations
+  global truncate_limit
+  while True:
+    conversation_len = await get_conversation_len(chat_id)
+    if conversation_len > truncate_limit and chat_id in conversations:
+      now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+      #print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Conversation size is {conversation_len} tokens, thus it will be truncated\033[0m")
+      logging.info(f"Conversation size is {conversation_len} tokens, thus it will be truncated")
+      conversations[chat_id].pop(0) 
+    else:
+      break
+
+async def get_conversation_len(chat_id: int) -> int:
+  global conversations
+  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  num_tokens = 0
+  for msg in conversations[chat_id]:
+    # every message follows <im_start>{role/name}\n{content}<im_end>\n
+    num_tokens += 5
+    for key, value in msg.items():
+      num_tokens += len(encoding.encode(value))
+      if key == "name":  # if there's a name, the role is omitted
+          num_tokens += 5  # role is always required and always 1 token
+  num_tokens += 5  # every reply is primed with <im_start>assistant
+  return num_tokens
+
+async def get_prompt_len(prompt: dict) -> int:
+  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  num_tokens = 0
+  # every message follows <im_start>{role/name}\n{content}<im_end>\n
+  num_tokens += 5
+  for msg in prompt:
+    for key, value in msg.items():
+      num_tokens += len(encoding.encode(value))
+      if key == "name":  # if there's a name, the role is omitted
+        num_tokens += 5  # role is always required and always 1 token
+  return num_tokens
+
+@dp.message(Command('gpt_system'))
+async def gpt_system_message(message: types.Message, state: FSMContext):
+  await state.set_state(GPTSystem.question1)
+  await message.answer("Введите системное сообщение...")
+
+@dp.message(GPTSystem.question1)
+async def gpt_system_question1_handler(message: types.Message, state: FSMContext):
+  await state.clear()
+  await default_message_handler(message, "system")
+  
+@dp.message(Command('gpt_clear'))
+async def gpt_clear(message: types.Message, silent_mode=False):
+  global conversations
+  if message.chat.id in conversations:
+    del conversations[message.chat.id]
+    await file_write()
+
+  if not silent_mode:
+    text = '❗️История переписки с ChatGPT очищена 💪'
+    await message.answer(text, parse_mode="HTML")
+    
+@dp.message(Command('gpt_clear_all'))
+async def gpt_clear_all(message: types.Message=None):
+  global conversations
+  conversations = {}
+  await file_write()
+  now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
+  #print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'gpt_clear_all' is completed\033[0m")
+  logging.info("Job 'gpt_clear_all' is completed")
+
+@dp.message(Command('gpt_show'))
+async def gpt_show(message: types.Message):
+  global conversations
+  if message.chat.id in conversations:
+    message = await bot.send_message(message.chat.id, f"Chat_id: {message.chat.id}")
+    LastMessage_id = message.message_id
+    LastMessage_text = message.text + "\n"
+    for msg in conversations[message.chat.id]:
+      LastMessage_text += f"- {msg['content']}\n"
+      await bot.edit_message_text(chat_id=message.chat.id, message_id=LastMessage_id, text=LastMessage_text)
+  else:
+    text = '❗️История переписки с ChatGPT пустая'
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command('gpt_show_all'))
+async def gpt_show_all(message: types.Message):
+  global conversations
+  if conversations:
+    for chat_id in conversations:
+      message = await bot.send_message(message.chat.id, f"Chat_id: {chat_id}")
+      LastMessage_id = message.message_id
+      LastMessage_text = message.text + "\n"
+      for msg in conversations[chat_id]:
+        LastMessage_text += f"- {msg['content']}\n"
+        await bot.edit_message_text(chat_id=message.chat.id, message_id=LastMessage_id, text=LastMessage_text)
+  else:
+    text = '❗️История переписки с ChatGPT пустая'
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command('agenda_add'))
+async def agenda_add(message: types.Message, state: FSMContext):
+  error_code = await check_authority(message, 'agenda_add')
+  if error_code != 0:
+    return
+  
+  await state.set_state(AgendaAdd.question1) 
+  await message.answer("С новой строки введите один или несколько пунктов для добавления в повестку заседания Клуба 101 или введите 'Нет' для прерывания команды...")
+  
+@dp.message(AgendaAdd.question1)
+async def agenda_add_question1_handler(message: types.Message, state: FSMContext):
+  await state.clear()
+  global agenda
+  if message.text.lower() != "нет":
+    lines = message.text.splitlines()
+    for line in lines:
+      agenda.append(line)
+    await file_write()
+  else:
+    text = '❗️Команда сброшена 🤬'
+    await message.answer(text, parse_mode="HTML")
+  await agenda_show(message)
+
+@dp.message(Command('agenda_delete'))
+async def agenda_delete(message: types.Message, state: FSMContext):
+  error_code = await check_authority(message, 'agenda_delete')
+  if error_code != 0:
+    return
+      
+  global agenda
+  if agenda != []:
+    await agenda_show(message)
+    await state.set_state(AgendaDelete.question1)
+    await message.answer("Введите через запятую номера позиций, которые нужно удалить из повестки заседания Клуба 101 или введите 'Нет' для прерывания команды...")
+  else:
+    text = '❗️Повестка заседания Клуба 101 пустая - удалять нечего 😢'
+    await message.answer(text, parse_mode="HTML")
+
+@dp.message(AgendaDelete.question1)
+async def agenda_delete_question1_handler(message: types.Message, state: FSMContext):
+  global agenda
+  temp_agenda = []
+  num_array = []
+  await state.clear()
+  if message.text.lower() != "нет":
+    lines_to_delete = message.text.split(',')
+    for line_num in lines_to_delete:
+      try:
+        num = int(line_num.strip())
+        if num > 0 and num <= len(agenda):
+          num_array.append(num)
+      except ValueError:
+        #ignore non-integer line numbers
+        pass
+    if num_array != []:
+      for i, line in enumerate(agenda):
+        if i+1 not in num_array:
+          temp_agenda.append(line)
+      agenda = temp_agenda
+      await file_write()
+  else:
+    text = '❗️Команда сброшена 🤬'
+    await message.answer(text, parse_mode="HTML")
+  await agenda_show(message)
+
+@dp.message(Command('agenda_show'))
+async def agenda_show(message: types.Message):
+  error_code = await check_authority(message, 'agenda_show')
+  if error_code != 0:
+    return
+      
+  global agenda
+  mes = []
+  if agenda != []:
+    text = '❗️Повестка заседания Клуба 101:'
+    mes.append(text)
+    for i, item in enumerate(agenda):
+      item_id = i + 1
+      text = f'👉 {item_id}. {item}'
+      mes.append(text)
+    await bot.send_message(message.chat.id,'\n'.join(mes), parse_mode="HTML")
+  else:
+    text = '❗️Повестка заседания Клуба 101 пока пустая 😢'
+    await bot.send_message(message.chat.id, text, parse_mode="HTML")
+  
+@dp.message(Command('agenda_clear'))
+async def agenda_clear(message: types.Message):
+  error_code = await check_authority(message, 'agenda_clear')
+  if error_code != 0:
+    return
+      
+  global agenda
+  agenda = []
+  await file_write()
+  text = '❗️Повестка заседания Клуба 101 очищена 💪'
+  await message.answer(text, parse_mode="HTML")
+
+@dp.message(lambda message: not message.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
   article_text = []
   url_yes = False
   parser_option = 1
   orig_url = False
-
-  if message.chat.type != types.ChatType.PRIVATE and role != "system":
+  if message.chat.type != enums.chat_type.ChatType.PRIVATE and role != "system":
     if f'@{bot_details.username}' in message.text:
       content = message.text.replace(f'@{bot_details.username}', '').strip()
     elif message.reply_to_message and message.reply_to_message.from_user.username == bot_details.username:
@@ -89,9 +342,9 @@ async def default_message_handler(message: types.Message, role: str="user"):
         if message.reply_to_message.caption:
           content += message.reply_to_message.caption
 
-      await typing(message.chat.id)
-      await ask_chatGPT(message, content, "user")
-      return
+      async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+        await ask_chatGPT(message, content, "user")
+        return
     else:
       return
   else:
@@ -145,269 +398,22 @@ async def default_message_handler(message: types.Message, role: str="user"):
     await message.answer(text, parse_mode="HTML")
     return
     
-  await typing(message.chat.id)
-  await ask_chatGPT(message, content, role)
+  async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+    await ask_chatGPT(message, content, role)
 
-async def ask_chatGPT(message: types.Message, content, role):
-  global conversations
-  if message.chat.id not in conversations:
-    conversations[message.chat.id] = []
-  conversations[message.chat.id].append({"role": role, "content": content})
-  await truncate_conversation(message.chat.id)
-  
-  max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
-  try:
-    completion = openai.ChatCompletion.create(
-      model="gpt-3.5-turbo-1106",
-      messages=conversations[message.chat.id],
-      max_tokens=max_tokens_chat,
-      temperature=temperature,
-      )
-  except (
-      openai.error.APIError,
-      openai.error.APIConnectionError,
-      openai.error.AuthenticationError,
-      openai.error.InvalidAPIType,
-      openai.error.InvalidRequestError,
-      openai.error.OpenAIError,
-      openai.error.PermissionError,
-      openai.error.PermissionError,
-      openai.error.RateLimitError,
-      openai.error.ServiceUnavailableError,
-      openai.error.SignatureVerificationError,
-      openai.error.Timeout,
-      openai.error.TryAgain,
-  ) as e:
-    print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
-    pass  
-    
-  gpt_finish_reason = completion.choices[0].finish_reason
-  if gpt_finish_reason.lower() == 'stop':
-    gpt_response = completion.choices[0].message.content
-    await message.reply(gpt_response)
-    conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
-    await file_write()
-  else: 
-    text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
-    await message.answer(text)
-
-@dp.message_handler(commands=['get_a_fact'])
-async def get_a_fact(message: types.Message):
-  await gpt_clear(message, True)
-  content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
-  await ask_chatGPT(message, content, "user")
- 
-async def truncate_conversation(chat_id: int):
-  global conversations
-  global truncate_limit
-  while True:
-    conversation_len = await get_conversation_len(chat_id)
-    if conversation_len > truncate_limit and chat_id in conversations:
-      now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-      print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Conversation size is {conversation_len} tokens, thus it will be truncated\033[0m")
-      conversations[chat_id].pop(0) 
-    else:
-      break
-
-async def get_conversation_len(chat_id: int) -> int:
-  global conversations
-  # tiktoken.model.MODEL_TO_ENCODING["gpt-3.5-turbo"] = "cl100k_base"
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-  num_tokens = 0
-  for msg in conversations[chat_id]:
-    # every message follows <im_start>{role/name}\n{content}<im_end>\n
-    num_tokens += 5
-    for key, value in msg.items():
-      num_tokens += len(encoding.encode(value))
-      if key == "name":  # if there's a name, the role is omitted
-          num_tokens += 5  # role is always required and always 1 token
-  num_tokens += 5  # every reply is primed with <im_start>assistant
-  return num_tokens
-
-async def get_prompt_len(prompt: dict) -> int:
-  # tiktoken.model.MODEL_TO_ENCODING["gpt-3.5-turbo"] = "cl100k_base"
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
-  num_tokens = 0
-  # every message follows <im_start>{role/name}\n{content}<im_end>\n
-  num_tokens += 5
-  for msg in prompt:
-    for key, value in msg.items():
-      num_tokens += len(encoding.encode(value))
-      if key == "name":  # if there's a name, the role is omitted
-        num_tokens += 5  # role is always required and always 1 token
-  return num_tokens
-
-@dp.message_handler(commands=['gpt_system'])
-async def gpt_system_message(message: types.Message):
-  await message.answer("Введите системное сообщение...")
-  await GPTSystem.question1.set()
-
-@dp.message_handler(state=GPTSystem.question1)
-async def gpt_system_question1_handler(message: types.Message, state: FSMContext):
-  await state.finish()
-  await default_message_handler(message, "system")
-
-async def typing(chat_id):
-  typing = types.ChatActions.TYPING
-  await bot.send_chat_action(chat_id=chat_id, action=typing)
-  
-@dp.message_handler(commands=['gpt_clear'])
-async def gpt_clear(message: types.Message, silent_mode=False):
-  global conversations
-  if message.chat.id in conversations:
-    del conversations[message.chat.id]
-    await file_write()
-
-  if not silent_mode:
-    text = '❗️История переписки с ChatGPT очищена 💪'
-    await message.answer(text, parse_mode="HTML")
-    
-@dp.message_handler(commands=['gpt_clear_all'])
-async def gpt_clear_all(message: types.Message=None):
-  global conversations
-  conversations = {}
-  await file_write()
-  now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
-  print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'gpt_clear_all' is completed\033[0m")
-
-@dp.message_handler(commands=['gpt_show'])
-async def gpt_show(message: types.Message):
-  global conversations
-  if message.chat.id in conversations:
-    message = await bot.send_message(message.chat.id, f"Chat_id: {message.chat.id}")
-    LastMessage_id = message.message_id
-    LastMessage_text = message.text + "\n"
-    for msg in conversations[message.chat.id]:
-      LastMessage_text += f"- {msg['content']}\n"
-      await bot.edit_message_text(chat_id=message.chat.id, message_id=LastMessage_id, text=LastMessage_text)
-  else:
-    text = '❗️История переписки с ChatGPT пустая'
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message_handler(commands=['gpt_show_all'])
-async def gpt_show_all(message: types.Message):
-  global conversations
-  if conversations:
-    for chat_id in conversations:
-      message = await bot.send_message(message.chat.id, f"Chat_id: {chat_id}")
-      LastMessage_id = message.message_id
-      LastMessage_text = message.text + "\n"
-      for msg in conversations[chat_id]:
-        LastMessage_text += f"- {msg['content']}\n"
-        await bot.edit_message_text(chat_id=message.chat.id, message_id=LastMessage_id, text=LastMessage_text)
-  else:
-    text = '❗️История переписки с ChatGPT пустая'
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message_handler(commands=['agenda_add'])
-async def agenda_add(message: types.Message):
-  error_code = await check_authority(message, 'agenda_add')
-  if error_code != 0:
-    return
-    
-  await message.answer("С новой строки введите один или несколько пунктов для добавления в повестку заседания Клуба 101 или введите 'Нет' для прерывания команды...")
-  await AgendaAdd.question1.set()
-
-@dp.message_handler(state=AgendaAdd.question1)
-async def agenda_add_question1_handler(message: types.Message, state: FSMContext):
-  await state.finish()
-  global agenda
-  if message.text.lower() != "нет":
-    lines = message.text.splitlines()
-    for line in lines:
-      agenda.append(line)
-    await file_write()
-  else:
-    text = '❗️Команда сброшена 🤬'
-    await message.answer(text, parse_mode="HTML")
-  await agenda_show(message)
-
-@dp.message_handler(commands=['agenda_delete'])
-async def agenda_delete(message: types.Message):
-  error_code = await check_authority(message, 'agenda_delete')
-  if error_code != 0:
-    return
-      
-  global agenda
-  if agenda != []:
-    await agenda_show(message)
-    await message.answer("Введите через запятую номера позиций, которые нужно удалить из повестки заседания Клуба 101 или введите 'Нет' для прерывания команды...")
-    await AgendaDelete.question1.set()
-  else:
-    text = '❗️Повестка заседания Клуба 101 пустая - удалять нечего 😢'
-    await message.answer(text, parse_mode="HTML")
-
-@dp.message_handler(state=AgendaDelete.question1)
-async def agenda_delete_question1_handler(message: types.Message, state: FSMContext):
-  global agenda
-  temp_agenda = []
-  num_array = []
-  await state.finish()
-  if message.text.lower() != "нет":
-    lines_to_delete = message.text.split(',')
-    for line_num in lines_to_delete:
-      try:
-        num = int(line_num.strip())
-        if num > 0 and num <= len(agenda):
-          num_array.append(num)
-      except ValueError:
-        #ignore non-integer line numbers
-        pass
-    if num_array != []:
-      for i, line in enumerate(agenda):
-        if i+1 not in num_array:
-          temp_agenda.append(line)
-      agenda = temp_agenda
-      await file_write()
-  else:
-    text = '❗️Команда сброшена 🤬'
-    await message.answer(text, parse_mode="HTML")
-  await agenda_show(message)
-
-@dp.message_handler(commands=['agenda_show'])
-async def agenda_show(message: types.Message):
-  error_code = await check_authority(message, 'agenda_show')
-  if error_code != 0:
-    return
-      
-  global agenda
-  mes = []
-  if agenda != []:
-    text = '❗️Повестка заседания Клуба 101:'
-    mes.append(text)
-    for i, item in enumerate(agenda):
-      item_id = i + 1
-      text = f'👉 {item_id}. {item}'
-      mes.append(text)
-    await bot.send_message(message.chat.id,'\n'.join(mes), parse_mode="HTML")
-  else:
-    text = '❗️Повестка заседания Клуба 101 пока пустая 😢'
-    await bot.send_message(message.chat.id, text, parse_mode="HTML")
-  
-@dp.message_handler(commands=['agenda_clear'])
-async def agenda_clear(message: types.Message):
-  error_code = await check_authority(message, 'agenda_clear')
-  if error_code != 0:
-    return
-      
-  global agenda
-  agenda = []
-  await file_write()
-  text = '❗️Повестка заседания Клуба 101 очищена 💪'
-  await message.answer(text, parse_mode="HTML")
-  
-@dp.message_handler(commands=['send_poll_now'])
+@dp.message(Command('send_poll_now'))
 async def send_poll(message: types.Message):
   error_code = await check_authority(message, 'send_poll_now')
   if error_code != 0:
     return
     
-  if message.chat.type == types.ChatType.PRIVATE:
+  if message.chat.type == enums.chat_type.ChatType.PRIVATE:
     text = '❗️Запуск голосования возможен только из группового чата'
     await bot.send_message(message.chat.id, text, parse_mode="HTML")
     return
       
   global chat_id
+  global chat_type
   global poll_message_id
   global total_answers
   global opt1
@@ -419,6 +425,7 @@ async def send_poll(message: types.Message):
   opt3 = 0  
   if chat_id == 0 and message.chat.id != 0:
     chat_id = message.chat.id
+    chat_type = message.chat.type
   await unpin_poll_results(silent_mode=True)
   moscow_tz = pytz.timezone('Europe/Moscow')
   now = datetime.datetime.now(moscow_tz)
@@ -451,14 +458,14 @@ async def wait_for_poll_stop():
       await asyncio.sleep(time_until_poll_stop)
     try:
       await bot.stop_poll(chat_id, poll_message_id)
-    except aiogram.utils.exceptions.PollHasAlreadyBeenClosed:
+    except aiogram.exceptions.DetailedAiogramError("Poll Has Already Been Closed"):
       pass
 
-@dp.poll_handler(lambda closed_poll: closed_poll.is_closed is True)
+@dp.poll(lambda closed_poll: closed_poll.is_closed is True)
 async def poll_results(closed_poll: types.Poll):
   global pinned_message_id
   global poll_message_id
-  message = types.Message(chat=types.Chat(id=chat_id))
+  message = types.Message(chat=types.Chat(id=chat_id,type=chat_type),date=datetime.datetime.now(),message_id=0)
   max_option_1 = closed_poll.options[0].text
   max_votes_1 = closed_poll.options[0].voter_count
   max_id_1 = 1
@@ -503,9 +510,8 @@ async def poll_results(closed_poll: types.Poll):
       await file_write()
       await agenda_show(message)
  
-@dp.poll_answer_handler(lambda poll_answer: True)
+@dp.poll_answer(lambda poll_answer: True)
 async def poll_answer(poll_answer: types.PollAnswer):
-  global chat_id
   global total_answers
   global opt1
   global opt2
@@ -540,7 +546,8 @@ async def unpin_poll_results(silent_mode=False):
     await file_write()
   now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
   if not silent_mode:
-    print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'unpin_poll_results' is completed\033[0m")
+    #print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'unpin_poll_results' is completed\033[0m")
+    logging.info("Job 'unpin_poll_results' is completed")
 
 async def polling_reminder():
   if poll_message_id != 0:
@@ -566,16 +573,19 @@ async def fact_job(message: types.Message):
 async def maintenance_job():
   aioschedule.every().day.at('22:00').do(gpt_clear_all)
   aioschedule.every().sunday.at('22:01').do(unpin_poll_results)
+  aioschedule.every().sunday.at('22:02').do(clear_logfile)
 
-@dp.message_handler(commands=['schedule_start'])
+@dp.message(Command('schedule_start'))
 async def schedule_start(message: types.Message):
   global PollingJob
   global JobActive
   global chat_id
+  global chat_type
   
-  if message.chat.type != types.ChatType.PRIVATE:
+  if message.chat.type != enums.chat_type.ChatType.PRIVATE:
     if not chat_id:
       chat_id = message.chat.id
+      chat_type = message.chat.type
     error_code = await check_authority(message, 'schedule_start')
     if error_code != 0:
       return
@@ -587,7 +597,7 @@ async def schedule_start(message: types.Message):
     text = '❗️Запуск плановых задач возможен только из группового чата'
     await bot.send_message(message.chat.id, text, parse_mode="HTML")
 
-@dp.message_handler(commands=['schedule_check'])
+@dp.message(Command('schedule_check'))
 async def schedule_check(message: types.Message):
   error_code = await check_authority(message, 'schedule_check')
   if error_code != 0:
@@ -608,7 +618,7 @@ async def schedule_check(message: types.Message):
     text += '\n❗️Плановые задачи остановлены'
   await message.answer(text, parse_mode="HTML")
     
-@dp.message_handler(commands=['schedule_stop'])
+@dp.message(Command('schedule_stop'))
 async def schedule_stop(message: types.Message):
   error_code = await check_authority(message, 'schedule_stop')
   if error_code != 0:
@@ -620,6 +630,31 @@ async def schedule_stop(message: types.Message):
   await schedule_jobs(message)    
   text = '❗️Опрос по расписанию остановлен 💪'
   await message.answer(text, parse_mode="HTML")
+
+@dp.message(Command('clear_log'))
+async def clear_logfile(message: types.Message=None, Job=False):
+  if Job:
+    max_size_bytes = 1024 * 1024
+  else:
+    max_size_bytes = 0
+
+  if not os.path.exists(logfile):
+    raise FileNotFoundError(f"Log file '{logfile}' does not exist.")
+
+  # Get file size
+  file_size = os.path.getsize(logfile)
+
+  if file_size > max_size_bytes:
+    logging.info(f"Log file '{logfile}' exceeded size limit ({max_size_bytes} bytes). Cleaning...")
+    try:
+      with open(logfile, "w") as f:
+        # Clear the file content
+        f.write("")
+      logging.info(f"Log file '{logfile}' cleaned successfully.")
+    except Exception as e:
+      logging.error(f"Error cleaning log file: {e}")
+  else:
+    logging.info(f"Log file has size of {file_size} bytes")
 
 async def schedule_jobs(message: types.Message, silent_mode=False):
   aioschedule.clear()
@@ -636,7 +671,7 @@ async def check_authority(message, command):
   error_code = 0
   commands = ['gpt_clear']
   if command not in commands:
-    if (message.chat.type == types.ChatType.PRIVATE and message.from_user.id != admin_chat_id) or (message.chat.type != types.ChatType.PRIVATE and message.chat.id != chat_id):
+    if (message.chat.type == enums.chat_type.ChatType.PRIVATE and message.from_user.id != admin_chat_id) or (message.chat.type != enums.chat_type.ChatType.PRIVATE and message.chat.id != chat_id):
       text = "❗️Нет доступа к команде"
       await bot.send_message(message.chat.id, text)
       error_code = 4
@@ -652,6 +687,7 @@ async def file_read():
   global opt2
   global opt3
   global chat_id
+  global chat_type
   global agenda
   global conversations
 
@@ -667,6 +703,7 @@ async def file_read():
     opt2 = filedata["opt2"]
     opt3 = filedata["opt3"]
     chat_id = filedata["chat_id"]
+    chat_type = filedata["chat_type"]
     agenda = filedata["agenda"]
     conversations = filedata["conversations"]
 
@@ -681,6 +718,7 @@ async def file_write():
                 "opt2": opt2,
                 "opt3": opt3,
                 "chat_id": chat_id,
+                "chat_type": chat_type,
                 "agenda": agenda,
                 "conversations": conversations}
     with open(filename, 'wb') as f:
@@ -697,6 +735,7 @@ async def file_init():
                 "opt2": 0,
                 "opt3": 0,
                 "chat_id": 0,
+                "chat_type": "",
                 "agenda": [],
                 "conversations": {}}
     with open(filename, 'wb') as f:
@@ -706,20 +745,22 @@ async def run_scheduled_jobs():
   while True:
     await aioschedule.run_pending()
     await asyncio.sleep(1)
-  
+
+
 async def main():
   global bot_details
   bot_details = await bot.get_me()
   await file_init()
   await file_read()
   if JobActive:
-    message = types.Message(chat=types.Chat(id=chat_id))
+    message = types.Message(chat=types.Chat(id=chat_id,type=chat_type),date=datetime.datetime.now(),message_id=0)
     await schedule_jobs(message, silent_mode=True)
   job_loop = asyncio.get_event_loop()
   job_loop.create_task(run_scheduled_jobs())
-  await dp.start_polling(timeout=30)
+  await bot.delete_webhook(drop_pending_updates=True)
+  await dp.start_polling(bot)
 
 if __name__ == '__main__':
-  keep_alive()
+  # keep_alive()
   main_loop = asyncio.get_event_loop() 
   main_loop.run_until_complete(main())
