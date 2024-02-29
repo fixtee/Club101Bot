@@ -32,8 +32,7 @@ logfile = "journal.log"
 logging.basicConfig(
     filename=logfile,
     level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(message)s",
-    )
+    format="%(asctime)s %(levelname)s %(message)s")
 
 bot = Bot(token=os.environ['bot_token'])
 dp = Dispatcher()
