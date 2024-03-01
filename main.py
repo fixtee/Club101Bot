@@ -16,6 +16,12 @@ from aiogram.filters import Command
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
+bot_token = os.environ.get('bot_token')
 
 class GPTSystem(StatesGroup):
   question1 = State()
@@ -34,13 +40,13 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s")
 
-bot = Bot(token=os.environ['bot_token'])
+bot = Bot(token=os.environ.get('bot_token'))
 dp = Dispatcher()
 
-openai_client = openai.AsyncOpenAI(api_key=os.environ['openai_token'])
-admin_chat_id = int(os.environ['admin_chat_id'])
-FactActive = int(os.environ['fact_job'])
-reply_probability = float(os.environ['reply_probability'])
+openai_client = openai.AsyncOpenAI(api_key=os.environ.get('openai_token'))
+admin_chat_id = int(os.environ.get('admin_chat_id'))
+FactActive = int(os.environ.get('fact_job'))
+reply_probability = float(os.environ.get('reply_probability'))
 
 chat_id = 0
 poll_message_id = 0
