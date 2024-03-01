@@ -558,8 +558,8 @@ async def polling_reminder():
     await bot.send_message(chat_id, text, parse_mode="HTML")
   
 async def polling_job(message: types.Message, silent_mode=False):
-  aioschedule.every().thursday.at('09:00').do(send_poll, message=message)
-  aioschedule.every().thursday.at('17:00').do(polling_reminder) 
+  aioschedule.every().thursday.at('12:00').do(send_poll, message=message)
+  aioschedule.every().thursday.at('20:00').do(polling_reminder) 
   
   if not silent_mode:
     text = '❗️Опрос по расписанию запущен 💪'
@@ -571,12 +571,12 @@ async def polling_job(message: types.Message, silent_mode=False):
     await bot.send_message(chat_id, text, parse_mode="HTML")
 
 async def fact_job(message: types.Message):
-  aioschedule.every().day.at('13:00').do(get_a_fact, message=message)
+  aioschedule.every().day.at('16:00').do(get_a_fact, message=message)
 
 async def maintenance_job():
-  aioschedule.every().day.at('22:00').do(gpt_clear_all)
-  aioschedule.every().sunday.at('22:01').do(unpin_poll_results)
-  aioschedule.every().sunday.at('22:02').do(clear_logfile)
+  aioschedule.every().day.at('01:00').do(gpt_clear_all)
+  aioschedule.every().monday.at('01:01').do(unpin_poll_results)
+  aioschedule.every().monday.at('01:02').do(clear_logfile)
 
 @dp.message(Command('schedule_start'))
 async def schedule_start(message: types.Message):
