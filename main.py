@@ -21,24 +21,13 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-bot_token = os.environ.get('bot_token')
-
-class GPTSystem(StatesGroup):
-  question1 = State()
-  
-class AgendaAdd(StatesGroup):
-  question1 = State()
-
-class AgendaDelete(StatesGroup):
-  question1 = State()
-
-nest_asyncio.apply()
-
 logfile = "journal.log"
 logging.basicConfig(
     filename=logfile,
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s")
+
+nest_asyncio.apply()
 
 bot = Bot(token=os.environ.get('bot_token'))
 dp = Dispatcher()
@@ -68,6 +57,15 @@ filename = 'saved_data.pkl'
 filedata = None
 chat_type = ''
 
+class GPTSystem(StatesGroup):
+  question1 = State()
+  
+class AgendaAdd(StatesGroup):
+  question1 = State()
+
+class AgendaDelete(StatesGroup):
+  question1 = State()
+  
 @dp.message(Command('get_a_fact'))
 async def get_a_fact(message: types.Message):
   await gpt_clear(message, True)
