@@ -10,7 +10,7 @@ import openai
 import random
 import tiktoken
 import aiogram.exceptions
-from aiogram import Bot, Dispatcher, types, enums
+from aiogram import Bot, Dispatcher, types, enums, F
 from url_parser import url_article_parser, get_parser_params
 from aiogram.filters import Command
 from aiogram.utils.chat_action import ChatActionSender
@@ -313,7 +313,7 @@ async def agenda_clear(message: types.Message):
   text = '❗️Повестка заседания Клуба 101 очищена 💪'
   await message.answer(text, parse_mode="HTML")
 
-@dp.message(lambda message: not message.text.startswith('/'))
+@dp.message(F.text)
 async def default_message_handler(message: types.Message, role: str="user"):
   article_text = []
   url_yes = False
