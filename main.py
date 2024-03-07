@@ -376,7 +376,7 @@ async def send_poll(message: types.Message):
   await file_write()
   await bot.pin_chat_message(chat_id=chat_id, message_id=poll_message_id)
   text = f'❗️Голосование длится до {end_hour}:00 или до получения 4 голосов за один из вариантов кроме последнего.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
-  await message.answer(text, parse_mode="HTML")
+  await bot.send_message(chat_id, text, parse_mode="HTML")
   await wait_for_poll_stop()
 
 
