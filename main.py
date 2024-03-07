@@ -84,7 +84,7 @@ async def ask_chatGPT(message: types.Message, content, role):
   max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
   try:
     completion = await openai_client.chat.completions.create(
-      model="gpt-3.5-turbo-0125",
+      model="gpt-3.5-turbo",
       messages=conversations[message.chat.id],
       max_tokens=max_tokens_chat,
       temperature=temperature,
