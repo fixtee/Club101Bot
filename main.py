@@ -495,7 +495,7 @@ async def polling_reminder():
 
 
 async def polling_job(message: types.Message, silent_mode=False):
-  aioschedule.every().day.at('13:18').do(send_poll, message=message)
+  aioschedule.every().thursday.at('12:00').do(send_poll, message=message)
   if PollingReminder:
     aioschedule.every().thursday.at('20:00').do(polling_reminder)
   
