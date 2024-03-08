@@ -35,6 +35,7 @@ dp = Dispatcher()
 openai_client = openai.AsyncOpenAI(api_key=os.environ.get('openai_token'))
 admin_chat_id = int(os.environ.get('admin_chat_id'))
 FactActive = int(os.environ.get('fact_job'))
+PollingReminder = int(os.environ.get('polling_reminder'))
 reply_probability = float(os.environ.get('reply_probability'))
 
 chat_id = 0
@@ -377,7 +378,7 @@ async def send_poll(message: types.Message):
   await bot.pin_chat_message(chat_id=chat_id, message_id=poll_message_id)
   text = f'❗️Голосование длится до {end_hour}:00 или до получения 4 голосов за один из вариантов кроме последнего.\nМожно выбрать несколько вариантов ответа.\nДля подтверждения ввода обязательно нажать <b>VOTE</b>.'
   await bot.send_message(chat_id, text, parse_mode="HTML")
-  await wait_for_poll_stop()
+  asyncio.create_task(wait_for_poll_stop())
 
 
 async def wait_for_poll_stop():
@@ -385,10 +386,13 @@ async def wait_for_poll_stop():
     now = datetime.datetime.now(moscow_tz)
     target_time = now.replace(hour=end_hour, minute=0, second=0, microsecond=0)
     time_until_poll_stop = (target_time - now).total_seconds()   
-    if time_until_poll_stop> 0:
-      await asyncio.sleep(time_until_poll_stop)
+    while time_until_poll_stop > 0 and poll_message_id != 0:
+      await asyncio.sleep(1)
+      now = datetime.datetime.now(moscow_tz)
+      time_until_poll_stop = (target_time - now).total_seconds() 
     try:
-      await bot.stop_poll(chat_id, poll_message_id)
+      if poll_message_id != 0:
+        await bot.stop_poll(chat_id, poll_message_id)
     except aiogram.exceptions.DetailedAiogramError("Poll Has Already Been Closed"):
       pass
 
@@ -491,8 +495,9 @@ async def polling_reminder():
 
 
 async def polling_job(message: types.Message, silent_mode=False):
-  aioschedule.every().thursday.at('12:00').do(send_poll, message=message)
-  aioschedule.every().thursday.at('20:00').do(polling_reminder) 
+  aioschedule.every().day.at('13:18').do(send_poll, message=message)
+  if PollingReminder:
+    aioschedule.every().thursday.at('20:00').do(polling_reminder)
   
   if not silent_mode:
     text = '❗️Опрос по расписанию запущен 💪'
@@ -506,12 +511,12 @@ async def polling_job(message: types.Message, silent_mode=False):
 
 async def fact_job(message: types.Message):
   aioschedule.every().day.at('16:00').do(get_a_fact, message=message)
-
+  
 
 async def maintenance_job():
   aioschedule.every().day.at('01:00').do(gpt_clear_all)
   aioschedule.every().monday.at('01:01').do(unpin_poll_results)
-  aioschedule.every().monday.at('01:02').do(clear_logfile)
+  aioschedule.every().monday.at('01:02').do(clear_logfile, Job=True)
 
 
 @dp.message(Command('schedule_start'))
@@ -596,17 +601,17 @@ async def clear_logfile(message: types.Message=None, Job=False):
     except Exception as e:
       logging.error(f"Error cleaning log file: {e}")
   else:
-    logging.info(f"Log file has size of {file_size} bytes")
+    logging.info(f"Log file has size {file_size} bytes")
 
 
 async def schedule_jobs(message: types.Message, silent_mode=False):
   aioschedule.clear()
   if PollingJob:
-    asyncio.create_task(polling_job(message, silent_mode))
+    await polling_job(message, silent_mode)
   if JobActive:
-    asyncio.create_task(maintenance_job())
+    await maintenance_job()
   if FactActive == 1:
-    asyncio.create_task(fact_job(message))
+    await fact_job(message)
   if poll_message_id != 0:
     asyncio.create_task(wait_for_poll_stop())
 
