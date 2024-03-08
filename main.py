@@ -598,6 +598,9 @@ async def clear_logfile(message: types.Message=None, Job=False):
         # Clear the file content
         f.write("")
       logging.info(f"Log file '{logfile}' cleaned successfully.")
+      if not Job:
+        text = '❗️Журнал сообщений очищен 💪'
+        await bot.send_message(message.chat.id, text, parse_mode="HTML")
     except Exception as e:
       logging.error(f"Error cleaning log file: {e}")
   else:
