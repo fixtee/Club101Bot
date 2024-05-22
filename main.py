@@ -95,7 +95,7 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   global max_tokens_return
   global truncate_limit
   
-  if command.command:
+  if not isinstance(command, str):
     command = command.command
 
   if command == 'gpt_model_4':
