@@ -82,7 +82,7 @@ async def get_a_fact(message: types.Message):
   text_content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
   await ask_chatGPT(message, text_content, "user")
 
-@dp.message(Command('gpt_model_3', 'gpt_model_4'))
+@dp.message(Command('gpt_model_3', 'gpt_model_4', 'gpt_model_show'))
 async def initialize_GPTmodel(message: types.Message=None, command: CommandObject=None, silent_mode=False):
   global gpt_model
   global gpt_encoding
@@ -93,21 +93,22 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   if command and not isinstance(command, str):
     command = command.command
 
-  if command == 'gpt_model_4' or gpt_model == gpt_model_4:
-    gpt_model = gpt_model_4
-    gpt_encoding = gpt_encoding_4
-    max_tokens_context = max_tokens_context_4
-    max_tokens_return = max_tokens_return_4
-  else:
-    gpt_model = gpt_model_3
-    gpt_encoding = gpt_encoding_3
-    max_tokens_context = max_tokens_context_3
-    max_tokens_return = max_tokens_return_3
-  truncate_limit = max_tokens_context - max_tokens_return
-  await file_write()
+  if command != 'gpt_model_show':
+    if command == 'gpt_model_4' or gpt_model == gpt_model_4:
+      gpt_model = gpt_model_4
+      gpt_encoding = gpt_encoding_4
+      max_tokens_context = max_tokens_context_4
+      max_tokens_return = max_tokens_return_4
+    else:
+      gpt_model = gpt_model_3
+      gpt_encoding = gpt_encoding_3
+      max_tokens_context = max_tokens_context_3
+      max_tokens_return = max_tokens_return_3
+    truncate_limit = max_tokens_context - max_tokens_return
+    await file_write()
 
   if not silent_mode:
-    text = f'❗️По умолчанию используется модель: {gpt_model}'
+    text = f'❗️Используется модель: {gpt_model}'
     await message.answer(text, parse_mode="HTML")
 
 
