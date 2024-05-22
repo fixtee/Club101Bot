@@ -59,17 +59,12 @@ chat_type = ''
 gpt_version = 3
 gpt_model_3 = 'gpt-3.5-turbo'
 gpt_model_4 = 'gpt-4o'
-gpt_model = gpt_model_3
 gpt_encoding_3 = 'gpt-3.5-turbo'
 gpt_encoding_4 = 'gpt-4-turbo'
-gpt_encoding = gpt_encoding_3
 max_tokens_return_4 = 4096
 max_tokens_context_4 = 128000 
 max_tokens_return_3 = 4096
 max_tokens_context_3 = 16385
-max_tokens_return = max_tokens_return_3
-max_tokens_context = max_tokens_context_3
-truncate_limit = max_tokens_context - max_tokens_return
 
 class GPTSystem(StatesGroup):
   question1 = State()
@@ -95,10 +90,10 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   global max_tokens_return
   global truncate_limit
   
-  if not isinstance(command, str):
+  if command and not isinstance(command, str):
     command = command.command
 
-  if command == 'gpt_model_4':
+  if command == 'gpt_model_4' or gpt_model == gpt_model_4:
     gpt_model = gpt_model_4
     gpt_encoding = gpt_encoding_4
     max_tokens_context = max_tokens_context_4
@@ -109,11 +104,11 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
     max_tokens_context = max_tokens_context_3
     max_tokens_return = max_tokens_return_3
   truncate_limit = max_tokens_context - max_tokens_return
+  await file_write()
 
   if not silent_mode:
     text = f'❗️По умолчанию используется модель: {gpt_model}'
     await message.answer(text, parse_mode="HTML")
-
 
 
 async def ask_chatGPT(message: types.Message, role, text_content, image_content=''):
@@ -705,6 +700,7 @@ async def file_read():
   global opt3
   global chat_id
   global chat_type
+  global gpt_model
   global agenda
   global conversations
 
@@ -721,6 +717,7 @@ async def file_read():
     opt3 = filedata["opt3"]
     chat_id = filedata["chat_id"]
     chat_type = filedata["chat_type"]
+    gpt_model = filedata["gpt_model"]
     agenda = filedata["agenda"]
     conversations = filedata["conversations"]
 
@@ -737,6 +734,7 @@ async def file_write():
                 "opt3": opt3,
                 "chat_id": chat_id,
                 "chat_type": chat_type,
+                "gpt_model": gpt_model,
                 "agenda": agenda,
                 "conversations": conversations}
     with open(filename, 'wb') as f:
@@ -755,6 +753,7 @@ async def file_init():
                 "opt3": 0,
                 "chat_id": 0,
                 "chat_type": '',
+                "gpt_model": '',
                 "agenda": [],
                 "conversations": {}}
     with open(filename, 'wb') as f:
@@ -776,31 +775,12 @@ async def default_message_handler(message: types.Message, role: str="user"):
   url_yes = False
   parser_option = 1
   orig_url = False
-  if message.photo:
-    image = message.photo
-    if message.text:
-      text_content += message.text
-    elif message.caption:
-      text_content += message.caption
-  elif message.reply_to_message:
-    if message.reply_to_message.photo:
-      image = message.reply_to_message.photo
-      if message.text:
-        text_content += message.text
-      if message.caption:
-        text_content += message.caption
-      if message.reply_to_message:
-        if message.reply_to_message.text:
-          text_content += message.reply_to_message.text
-        if message.reply_to_message.caption:
-          text_content += message.reply_to_message.caption
-  if image:
-    image = image[-1]
-    image_info= await bot.get_file(image.file_id)
-    image_content = await bot.download_file(image_info.file_path)
+  
   if message.chat.type != enums.chat_type.ChatType.PRIVATE and role != "system":
-    if f'@{bot_details.username}' in message.text:
+    if message.text and f'@{bot_details.username}' in message.text:
       text_content = message.text.replace(f'@{bot_details.username}', '').strip()
+    elif message.caption and f'@{bot_details.username}' in message.caption:
+      text_content = message.caption.replace(f'@{bot_details.username}', '').strip()      
     elif message.reply_to_message and message.reply_to_message.from_user.username == bot_details.username:
       text_content = message.text
     elif random.random() <= reply_probability:
@@ -830,7 +810,17 @@ async def default_message_handler(message: types.Message, role: str="user"):
     else:
       return
   else:
-    text_content = message.text
+    if message.text:
+      text_content = message.text
+    elif message.caption:
+      text_content = message.caption
+    else:
+      return
+
+  if message.photo:
+    image = message.photo[-1]
+    image_info= await bot.get_file(image.file_id)
+    image_content = await bot.download_file(image_info.file_path)
   
   if message.entities is not None:
     for entity in message.entities:
@@ -874,6 +864,9 @@ async def default_message_handler(message: types.Message, role: str="user"):
       elif message.reply_to_message.caption:
         text_content += "\n" + message.reply_to_message.caption
 
+  if not text_content:
+    return
+  
   prompt_len = await get_prompt_len(prompt=[{"role": role, "content": text_content}])
   if prompt_len > max_tokens_context:
     text = f'❗️Длина запроса {prompt_len} токенов > максимальной длины разговора {max_tokens_context}'
@@ -888,6 +881,7 @@ async def main():
   bot_details = await bot.get_me()
   await file_init()
   await file_read()
+  await initialize_GPTmodel(None, None, True)
   if JobActive:
     message = types.Message(chat=types.Chat(id=chat_id,type=chat_type),date=datetime.datetime.now(),message_id=0)
     await schedule_jobs(message, silent_mode=True)
