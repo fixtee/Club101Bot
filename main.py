@@ -9,10 +9,11 @@ import logging
 import openai
 import random
 import tiktoken
+import base64
 import aiogram.exceptions
 from aiogram import Bot, Dispatcher, types, enums, F
 from url_parser import url_article_parser, get_parser_params
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -49,14 +50,26 @@ PollingJob = False
 JobActive = False
 bot_details = None
 conversations = {}
-max_tokens = 4000
-truncate_limit = 3500
 temperature = 1
 agenda = []
 end_hour = 23
 filename = 'saved_data.pkl'
 filedata = None
 chat_type = ''
+gpt_version = 3
+gpt_model_3 = 'gpt-3.5-turbo'
+gpt_model_4 = 'gpt-4o'
+gpt_model = gpt_model_3
+gpt_encoding_3 = 'gpt-3.5-turbo'
+gpt_encoding_4 = 'gpt-4-turbo'
+gpt_encoding = gpt_encoding_3
+max_tokens_return_4 = 4096
+max_tokens_context_4 = 128000 
+max_tokens_return_3 = 4096
+max_tokens_context_3 = 16385
+max_tokens_return = max_tokens_return_3
+max_tokens_context = max_tokens_context_3
+truncate_limit = max_tokens_context - max_tokens_return
 
 class GPTSystem(StatesGroup):
   question1 = State()
@@ -71,23 +84,65 @@ class AgendaDelete(StatesGroup):
 @dp.message(Command('get_a_fact'))
 async def get_a_fact(message: types.Message):
   await gpt_clear(message, True)
-  content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
-  await ask_chatGPT(message, content, "user")
+  text_content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
+  await ask_chatGPT(message, text_content, "user")
+
+@dp.message(Command('gpt_model_3', 'gpt_model_4'))
+async def initialize_GPTmodel(message: types.Message=None, command: CommandObject=None, silent_mode=False):
+  global gpt_model
+  global gpt_encoding
+  global max_tokens_context
+  global max_tokens_return
+  global truncate_limit
+  
+  if command.command:
+    command = command.command
+
+  if command == 'gpt_model_4':
+    gpt_model = gpt_model_4
+    gpt_encoding = gpt_encoding_4
+    max_tokens_context = max_tokens_context_4
+    max_tokens_return = max_tokens_return_4
+  else:
+    gpt_model = gpt_model_3
+    gpt_encoding = gpt_encoding_3
+    max_tokens_context = max_tokens_context_3
+    max_tokens_return = max_tokens_return_3
+  truncate_limit = max_tokens_context - max_tokens_return
+
+  if not silent_mode:
+    text = f'❗️По умолчанию используется модель: {gpt_model}'
+    await message.answer(text, parse_mode="HTML")
 
 
-async def ask_chatGPT(message: types.Message, content, role):
+
+async def ask_chatGPT(message: types.Message, role, text_content, image_content=''):
   global conversations
   if message.chat.id not in conversations:
     conversations[message.chat.id] = []
-  conversations[message.chat.id].append({"role": role, "content": content})
+
+  if image_content:
+    if gpt_model == gpt_model_3:
+      await initialize_GPTmodel(None, 'gpt_model_4', True)
+
+    base64_image_content = base64.b64encode(image_content.read()).decode('utf-8')
+    base64_image_content = f"data:image/jpeg;base64,{base64_image_content}"
+    conversations[message.chat.id].append({"role": role,
+                                           "content": [
+                                             {"type": "text", "text": text_content},
+                                             {"type": "image_url", "image_url": {"url": base64_image_content, "detail": "high"}},
+                                             ]
+                                             })
+  else:
+    conversations[message.chat.id].append({"role": role, "content": text_content})
   await truncate_conversation(message.chat.id)
-  
-  max_tokens_chat = max_tokens - await get_conversation_len(message.chat.id)
+
+  #max_tokens_chat = max_tokens_context - await get_conversation_len(message.chat.id)
   try:
     completion = await openai_client.chat.completions.create(
-      model="gpt-3.5-turbo",
+      model=gpt_model,
       messages=conversations[message.chat.id],
-      max_tokens=max_tokens_chat,
+      max_tokens=max_tokens_return,
       temperature=temperature,
       )
   except (
@@ -110,7 +165,7 @@ async def ask_chatGPT(message: types.Message, content, role):
     #print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
     logging.error(f"OpenAI API error: {e}")
     pass  
-
+  
   gpt_finish_reason = completion.choices[0].finish_reason
   if gpt_finish_reason.lower() == 'stop':
     gpt_response = completion.choices[0].message.content
@@ -124,7 +179,6 @@ async def ask_chatGPT(message: types.Message, content, role):
 
 async def truncate_conversation(chat_id: int):
   global conversations
-  global truncate_limit
   while True:
     conversation_len = await get_conversation_len(chat_id)
     if conversation_len > truncate_limit and chat_id in conversations:
@@ -138,21 +192,30 @@ async def truncate_conversation(chat_id: int):
 
 async def get_conversation_len(chat_id: int) -> int:
   global conversations
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  encoding = tiktoken.encoding_for_model(gpt_encoding)
   num_tokens = 0
   for msg in conversations[chat_id]:
     # every message follows <im_start>{role/name}\n{content}<im_end>\n
     num_tokens += 5
     for key, value in msg.items():
-      num_tokens += len(encoding.encode(value))
-      if key == "name":  # if there's a name, the role is omitted
+      if key == "content":
+        if isinstance(value, str):
+          num_tokens += len(encoding.encode(value))
+        elif isinstance(value, list):
+          for item in value:
+            for item_key, item_value in item.items():
+              if item_key == "text":
+                num_tokens += len(encoding.encode(str(item_value)))
+              elif item_key == "image_url":
+                num_tokens += 2805
+      elif key == "name":  # if there's a name, the role is omitted
           num_tokens += 5  # role is always required and always 1 token
   num_tokens += 5  # every reply is primed with <im_start>assistant
   return num_tokens
 
 
 async def get_prompt_len(prompt: dict) -> int:
-  encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
+  encoding = tiktoken.encoding_for_model(gpt_encoding)
   num_tokens = 0
   # every message follows <im_start>{role/name}\n{content}<im_end>\n
   num_tokens += 5
@@ -193,6 +256,7 @@ async def gpt_clear_all(message: types.Message=None):
   global conversations
   conversations = {}
   await file_write()
+  await initialize_GPTmodel(None, 'gpt_model_3', True)
   now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
   #print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'gpt_clear_all' is completed\033[0m")
   logging.info("Job 'gpt_clear_all' is completed")
@@ -690,7 +754,7 @@ async def file_init():
                 "opt2": 0,
                 "opt3": 0,
                 "chat_id": 0,
-                "chat_type": "",
+                "chat_type": '',
                 "agenda": [],
                 "conversations": {}}
     with open(filename, 'wb') as f:
@@ -703,17 +767,42 @@ async def run_scheduled_jobs():
     await asyncio.sleep(1)
 
 
-@dp.message(F.text & ~F.text.startswith('/'))
+@dp.message(F.content_type.in_({'text','photo'}) & ~F.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
+  text_content = ''
+  image_content = ''
+  image = ''
   article_text = []
   url_yes = False
   parser_option = 1
   orig_url = False
+  if message.photo:
+    image = message.photo
+    if message.text:
+      text_content += message.text
+    elif message.caption:
+      text_content += message.caption
+  elif message.reply_to_message:
+    if message.reply_to_message.photo:
+      image = message.reply_to_message.photo
+      if message.text:
+        text_content += message.text
+      if message.caption:
+        text_content += message.caption
+      if message.reply_to_message:
+        if message.reply_to_message.text:
+          text_content += message.reply_to_message.text
+        if message.reply_to_message.caption:
+          text_content += message.reply_to_message.caption
+  if image:
+    image = image[-1]
+    image_info= await bot.get_file(image.file_id)
+    image_content = await bot.download_file(image_info.file_path)
   if message.chat.type != enums.chat_type.ChatType.PRIVATE and role != "system":
     if f'@{bot_details.username}' in message.text:
-      content = message.text.replace(f'@{bot_details.username}', '').strip()
+      text_content = message.text.replace(f'@{bot_details.username}', '').strip()
     elif message.reply_to_message and message.reply_to_message.from_user.username == bot_details.username:
-      content = message.text
+      text_content = message.text
     elif random.random() <= reply_probability:
       responses = [
           "Усомнись в данном сообщении\n",
@@ -723,25 +812,25 @@ async def default_message_handler(message: types.Message, role: str="user"):
           "Расскажи что-то еще интересное по теме из данного сообщения\n",
           "Расскажи забавный факт по теме из данного сообщения\n",
       ]
-      content = random.choice(responses)
+      text_content = random.choice(responses)
       await gpt_clear(message, True)
       if message.text:
-        content += message.text
+        text_content += message.text
       if message.caption:
-        content += message.caption
+        text_content += message.caption
       if message.reply_to_message:
         if message.reply_to_message.text:
-          content += message.reply_to_message.text
+          text_content += message.reply_to_message.text
         if message.reply_to_message.caption:
-          content += message.reply_to_message.caption
+          text_content += message.reply_to_message.caption
 
       async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-        await ask_chatGPT(message, content, "user")
+        await ask_chatGPT(message, text_content, "user")
         return
     else:
       return
   else:
-    content = message.text
+    text_content = message.text
   
   if message.entities is not None:
     for entity in message.entities:
@@ -752,11 +841,11 @@ async def default_message_handler(message: types.Message, role: str="user"):
           parser_option = params['parser_option']
           orig_url = params['orig_url']
           article_text = await url_article_parser(url=url, parser_option=parser_option, orig_url=orig_url)
-          content = content.replace(f'parser_option{parser_option}', '').strip()
-          content = content.replace('orig_url', '').strip()
+          text_content = text_content.replace(f'parser_option{parser_option}', '').strip()
+          text_content = text_content.replace('orig_url', '').strip()
           if article_text != '':
-            content = content.replace(url, '')
-            content += "\n" + article_text
+            text_content = text_content.replace(url, '')
+            text_content += "\n" + article_text
   
   if message.reply_to_message:
     if message.reply_to_message.entities is not None:
@@ -768,11 +857,11 @@ async def default_message_handler(message: types.Message, role: str="user"):
             parser_option = params['parser_option']
             orig_url = params['orig_url']
             article_text = await url_article_parser(url=url, parser_option=parser_option, orig_url=orig_url)
-            content = content.replace(f'parser_option{parser_option}', '').strip()
-            content = content.replace('orig_url', '').strip()
+            text_content = text_content.replace(f'parser_option{parser_option}', '').strip()
+            text_content = text_content.replace('orig_url', '').strip()
             if article_text != '':
               url_yes = True
-              content += "\n" + article_text
+              text_content += "\n" + article_text
               break
     
     if not url_yes:
@@ -781,18 +870,18 @@ async def default_message_handler(message: types.Message, role: str="user"):
         if bot_details.username in reply_to_text:
           reply_to_text = reply_to_text.replace(f'@{bot_details.username}', '').strip()
         if reply_to_text:
-          content += "\n" + reply_to_text
+          text_content += "\n" + reply_to_text
       elif message.reply_to_message.caption:
-        content += "\n" + message.reply_to_message.caption
+        text_content += "\n" + message.reply_to_message.caption
 
-  prompt_len = await get_prompt_len(prompt=[{"role": role, "content": content}])
-  if prompt_len > max_tokens:
-    text = f'❗️Длина запроса {prompt_len} токенов > максимальной длины разговора {max_tokens}'
+  prompt_len = await get_prompt_len(prompt=[{"role": role, "content": text_content}])
+  if prompt_len > max_tokens_context:
+    text = f'❗️Длина запроса {prompt_len} токенов > максимальной длины разговора {max_tokens_context}'
     await message.answer(text, parse_mode="HTML")
     return
     
   async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-    await ask_chatGPT(message, content, role)
+    await ask_chatGPT(message, role, text_content, image_content)
 
 async def main():
   global bot_details
