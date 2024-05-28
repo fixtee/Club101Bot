@@ -93,8 +93,8 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   if command and not isinstance(command, str):
     command = command.command
 
-  if command != 'gpt_model_show':
-    if command == 'gpt_model_4' or gpt_model == gpt_model_4:
+  if command and command != 'gpt_model_show':
+    if command == 'gpt_model_4':
       gpt_model = gpt_model_4
       gpt_encoding = gpt_encoding_4
       max_tokens_context = max_tokens_context_4
