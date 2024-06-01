@@ -65,6 +65,11 @@ max_tokens_return_4 = 4096
 max_tokens_context_4 = 128000 
 max_tokens_return_3 = 4096
 max_tokens_context_3 = 16385
+gpt_model = ''
+gpt_encoding = ''
+max_tokens_context = 0
+max_tokens_return = 0
+truncate_limit = 0
 
 class GPTSystem(StatesGroup):
   question1 = State()
@@ -94,7 +99,7 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
     command = command.command
 
   if command and command != 'gpt_model_show':
-    if command == 'gpt_model_4':
+    if command == 'gpt_model_4' or command == gpt_model_4:
       gpt_model = gpt_model_4
       gpt_encoding = gpt_encoding_4
       max_tokens_context = max_tokens_context_4
@@ -882,7 +887,7 @@ async def main():
   bot_details = await bot.get_me()
   await file_init()
   await file_read()
-  await initialize_GPTmodel(None, None, True)
+  await initialize_GPTmodel(None, gpt_model, True)
   if JobActive:
     message = types.Message(chat=types.Chat(id=chat_id,type=chat_type),date=datetime.datetime.now(),message_id=0)
     await schedule_jobs(message, silent_mode=True)
