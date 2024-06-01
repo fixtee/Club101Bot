@@ -94,9 +94,15 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   global max_tokens_context
   global max_tokens_return
   global truncate_limit
+  global conversations
   
+  text2 = ''
   if command and not isinstance(command, str):
     command = command.command
+    if command == 'gpt_model_3':
+      conversations = {}
+      await file_write()
+      text2 = '❗️История сообщений очищена для обратной совместимости\n'
 
   if command and command != 'gpt_model_show':
     if command == 'gpt_model_4' or command == gpt_model_4:
@@ -113,7 +119,7 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
     await file_write()
 
   if not silent_mode:
-    text = f'❗️Используется модель: {gpt_model}'
+    text = f'❗️Используется модель: {gpt_model}' + text2
     await message.answer(text, parse_mode="HTML")
 
 
