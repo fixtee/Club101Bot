@@ -102,7 +102,7 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
     if command == 'gpt_model_3':
       conversations = {}
       await file_write()
-      text2 = '❗️История сообщений очищена для обратной совместимости\n'
+      text2 = '\n❗️История сообщений очищена для обратной совместимости'
 
   if command and command != 'gpt_model_show':
     if command == 'gpt_model_4' or command == gpt_model_4:
