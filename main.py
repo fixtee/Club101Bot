@@ -843,7 +843,7 @@ async def default_message_handler(message: types.Message, role: str="user"):
       image = message.reply_to_message.photo[-1]
       image_info= await bot.get_file(image.file_id)
       image_content = await bot.download_file(image_info.file_path)
-    elif message.reply_to_message.document
+    elif message.reply_to_message.document:
       if message.reply_to_message.document.mime_type.startswith('image'):
         image = message.reply_to_message.document
         image_info= await bot.get_file(image.file_id)
