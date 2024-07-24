@@ -57,14 +57,14 @@ filename = 'saved_data.pkl'
 filedata = None
 chat_type = ''
 gpt_version = 3
-gpt_model_3 = 'gpt-3.5-turbo'
-gpt_model_4 = 'gpt-4o'
-gpt_encoding_3 = 'gpt-3.5-turbo'
-gpt_encoding_4 = 'gpt-4-turbo'
-max_tokens_return_4 = 4096
-max_tokens_context_4 = 128000 
-max_tokens_return_3 = 4096
-max_tokens_context_3 = 16385
+gpt_model_mini = 'gpt-4o-mini'
+gpt_model_max = 'gpt-4o'
+gpt_encoding_mini = 'gpt-4-turbo'
+gpt_encoding_max = 'gpt-4-turbo'
+max_tokens_return_max = 4096
+max_tokens_context_max = 128000 
+max_tokens_return_mini = 4096
+max_tokens_context_mini = 128000
 gpt_model = ''
 gpt_encoding = ''
 max_tokens_context = 0
@@ -87,7 +87,7 @@ async def get_a_fact(message: types.Message):
   text_content = "Расскажи неинтересный факт, начав ответ со слов 'Неинтересный факт' только для этого запроса."
   await ask_chatGPT(message, text_content, "user")
 
-@dp.message(Command('gpt_model_3', 'gpt_model_4', 'gpt_model_show'))
+@dp.message(Command('gpt_model_mini', 'gpt_model_max', 'gpt_model_show'))
 async def initialize_GPTmodel(message: types.Message=None, command: CommandObject=None, silent_mode=False):
   global gpt_model
   global gpt_encoding
@@ -99,22 +99,22 @@ async def initialize_GPTmodel(message: types.Message=None, command: CommandObjec
   text2 = ''
   if command and not isinstance(command, str):
     command = command.command
-    if command == 'gpt_model_3':
-      conversations = {}
-      await file_write()
-      text2 = '\n❗️История сообщений очищена для обратной совместимости'
+    # if command == 'gpt_model_mini':
+    #   conversations = {}
+    #   await file_write()
+    #   text2 = '\n❗️История сообщений очищена для обратной совместимости'
 
   if command and command != 'gpt_model_show':
-    if command == 'gpt_model_4' or command == gpt_model_4:
-      gpt_model = gpt_model_4
-      gpt_encoding = gpt_encoding_4
-      max_tokens_context = max_tokens_context_4
-      max_tokens_return = max_tokens_return_4
+    if command == 'gpt_model_max' or command == gpt_model_max:
+      gpt_model = gpt_model_max
+      gpt_encoding = gpt_encoding_max
+      max_tokens_context = max_tokens_context_max
+      max_tokens_return = max_tokens_return_max
     else:
-      gpt_model = gpt_model_3
-      gpt_encoding = gpt_encoding_3
-      max_tokens_context = max_tokens_context_3
-      max_tokens_return = max_tokens_return_3
+      gpt_model = gpt_model_mini
+      gpt_encoding = gpt_encoding_mini
+      max_tokens_context = max_tokens_context_mini
+      max_tokens_return = max_tokens_return_mini
     truncate_limit = max_tokens_context - max_tokens_return
     await file_write()
 
@@ -129,8 +129,8 @@ async def ask_chatGPT(message: types.Message, role, text_content, image_content=
     conversations[message.chat.id] = []
 
   if image_content:
-    if gpt_model == gpt_model_3:
-      await initialize_GPTmodel(None, 'gpt_model_4', True)
+#    if gpt_model == gpt_model_mini:
+#      await initialize_GPTmodel(None, 'gpt_model_max', True)
 
     base64_image_content = base64.b64encode(image_content.read()).decode('utf-8')
     base64_image_content = f"data:image/jpeg;base64,{base64_image_content}"
@@ -144,7 +144,7 @@ async def ask_chatGPT(message: types.Message, role, text_content, image_content=
     conversations[message.chat.id].append({"role": role, "content": text_content})
   await truncate_conversation(message.chat.id)
 
-  #max_tokens_chat = max_tokens_context - await get_conversation_len(message.chat.id)
+# max_tokens_chat = max_tokens_context - await get_conversation_len(message.chat.id)
   try:
     completion = await openai_client.chat.completions.create(
       model=gpt_model,
@@ -263,7 +263,7 @@ async def gpt_clear_all(message: types.Message=None):
   global conversations
   conversations = {}
   await file_write()
-  await initialize_GPTmodel(None, 'gpt_model_3', True)
+  await initialize_GPTmodel(None, 'gpt_model_mini', True)
   now = datetime.datetime.now(pytz.timezone('Europe/Moscow'))
   #print(f"\033[38;2;128;0;128m{now.strftime('%d.%m.%Y %H:%M:%S')} | Job 'gpt_clear_all' is completed\033[0m")
   logging.info("Job 'gpt_clear_all' is completed")
@@ -778,7 +778,7 @@ async def run_scheduled_jobs():
     await asyncio.sleep(1)
 
 
-@dp.message(F.content_type.in_({'text','photo'}) & ~F.text.startswith('/'))
+@dp.message(F.content_type.in_({'text','photo','document'}) & ~F.text.startswith('/'))
 async def default_message_handler(message: types.Message, role: str="user"):
   text_content = ''
   image_content = ''
@@ -833,8 +833,23 @@ async def default_message_handler(message: types.Message, role: str="user"):
     image = message.photo[-1]
     image_info= await bot.get_file(image.file_id)
     image_content = await bot.download_file(image_info.file_path)
+  elif message.document:
+    if message.document.mime_type.startswith('image'):
+      image = message.document
+      image_info= await bot.get_file(image.file_id)
+      image_content = await bot.download_file(image_info.file_path)      
+  elif message.reply_to_message:
+    if message.reply_to_message.photo:
+      image = message.reply_to_message.photo[-1]
+      image_info= await bot.get_file(image.file_id)
+      image_content = await bot.download_file(image_info.file_path)
+    elif message.reply_to_message.document
+      if message.reply_to_message.document.mime_type.startswith('image'):
+        image = message.reply_to_message.document
+        image_info= await bot.get_file(image.file_id)
+        image_content = await bot.download_file(image_info.file_path)            
   
-  if message.entities is not None:
+  if message.entities is not None and not image:
     for entity in message.entities:
       if entity.type == "url":
         url = message.text[entity.offset: entity.offset + entity.length]
@@ -850,7 +865,7 @@ async def default_message_handler(message: types.Message, role: str="user"):
             text_content += "\n" + article_text
   
   if message.reply_to_message:
-    if message.reply_to_message.entities is not None:
+    if message.reply_to_message.entities is not None and not image:
       for entity in message.reply_to_message.entities:
         if entity.type == "url":
           url = message.reply_to_message.text[entity.offset: entity.offset + entity.length]
