@@ -55,8 +55,8 @@ filename = 'saved_data.pkl'
 filedata = None
 chat_type = ''
 gpt_version = 3
-gpt_model_mini = 'gpt-4o-mini-search-preview'
-gpt_model_max = 'gpt-4o-search-preview'
+gpt_model_mini = 'gpt-4o-mini
+gpt_model_max = 'gpt-4o'
 gpt_encoding_mini = 'gpt-4-turbo'
 gpt_encoding_max = 'gpt-4-turbo'
 max_tokens_return_max = 4096
@@ -142,12 +142,10 @@ async def ask_chatGPT(message: types.Message, role, text_content, image_content=
     conversations[message.chat.id].append({"role": role, "content": text_content})
   await truncate_conversation(message.chat.id)
 
-# max_tokens_chat = max_tokens_context - await get_conversation_len(message.chat.id)
   try:
     completion = await openai_client.chat.completions.create(
       model=gpt_model,
       messages=conversations[message.chat.id],
-      web_search_options={},
       max_tokens=max_tokens_return,
       )
     gpt_finish_reason = completion.choices[0].finish_reason
