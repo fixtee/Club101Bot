@@ -12,7 +12,6 @@ import tiktoken
 import base64
 import aiogram.exceptions
 from aiogram import Bot, Dispatcher, types, enums, F
-from url_parser import url_article_parser, get_parser_params
 from aiogram.filters import Command, CommandObject
 from aiogram.utils.chat_action import ChatActionSender
 from aiogram.fsm.context import FSMContext
@@ -50,15 +49,14 @@ PollingJob = False
 JobActive = False
 bot_details = None
 conversations = {}
-temperature = 1
 agenda = []
 end_hour = 23
 filename = 'saved_data.pkl'
 filedata = None
 chat_type = ''
 gpt_version = 3
-gpt_model_mini = 'gpt-4o-mini'
-gpt_model_max = 'gpt-4o'
+gpt_model_mini = 'gpt-4o-mini-search-preview'
+gpt_model_max = 'gpt-4o-search-preview'
 gpt_encoding_mini = 'gpt-4-turbo'
 gpt_encoding_max = 'gpt-4-turbo'
 max_tokens_return_max = 4096
@@ -149,9 +147,18 @@ async def ask_chatGPT(message: types.Message, role, text_content, image_content=
     completion = await openai_client.chat.completions.create(
       model=gpt_model,
       messages=conversations[message.chat.id],
+      web_search_options={},
       max_tokens=max_tokens_return,
-      temperature=temperature,
       )
+    gpt_finish_reason = completion.choices[0].finish_reason
+    if gpt_finish_reason.lower() == 'stop':
+      gpt_response = completion.choices[0].message.content
+      await message.reply(gpt_response)
+      conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
+      await file_write()
+    else:
+      text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
+      await message.answer(text)
   except (
       openai.APIConnectionError,
       openai.APIError,
@@ -171,18 +178,9 @@ async def ask_chatGPT(message: types.Message, role, text_content, image_content=
   ) as e:
     #print(f"\033[38;2;255;0;0mOpenAI API error: {e}\033[0m")
     logging.error(f"OpenAI API error: {e}")
-    pass  
-  
-  gpt_finish_reason = completion.choices[0].finish_reason
-  if gpt_finish_reason.lower() == 'stop':
-    gpt_response = completion.choices[0].message.content
-    await message.reply(gpt_response)
-    conversations[message.chat.id].append({"role": "assistant", "content": gpt_response})
-    await file_write()
-  else: 
+    gpt_finish_reason = completion.choices[0].finish_reason
     text = f'❗️Ошибка OpenAI API: {gpt_finish_reason}'
     await message.answer(text)
-
 
 async def truncate_conversation(chat_id: int):
   global conversations
@@ -784,9 +782,6 @@ async def default_message_handler(message: types.Message, role: str="user"):
   image_content = ''
   image = ''
   article_text = []
-  url_yes = False
-  parser_option = 1
-  orig_url = False
   
   if message.chat.type != enums.chat_type.ChatType.PRIVATE and role != "system":
     if message.text and f'@{bot_details.username}' in message.text:
@@ -848,48 +843,6 @@ async def default_message_handler(message: types.Message, role: str="user"):
         image = message.reply_to_message.document
         image_info= await bot.get_file(image.file_id)
         image_content = await bot.download_file(image_info.file_path)            
-  
-  if message.entities is not None and not image:
-    for entity in message.entities:
-      if entity.type == "url":
-        url = message.text[entity.offset: entity.offset + entity.length]
-        if url.startswith('http'):
-          params = await get_parser_params(message.text)
-          parser_option = params['parser_option']
-          orig_url = params['orig_url']
-          article_text = await url_article_parser(url=url, parser_option=parser_option, orig_url=orig_url)
-          text_content = text_content.replace(f'parser_option{parser_option}', '').strip()
-          text_content = text_content.replace('orig_url', '').strip()
-          if article_text != '':
-            text_content = text_content.replace(url, '')
-            text_content += "\n" + article_text
-  
-  if message.reply_to_message:
-    if message.reply_to_message.entities is not None and not image:
-      for entity in message.reply_to_message.entities:
-        if entity.type == "url":
-          url = message.reply_to_message.text[entity.offset: entity.offset + entity.length]
-          if url.startswith('http'):
-            params = await get_parser_params(message.text)
-            parser_option = params['parser_option']
-            orig_url = params['orig_url']
-            article_text = await url_article_parser(url=url, parser_option=parser_option, orig_url=orig_url)
-            text_content = text_content.replace(f'parser_option{parser_option}', '').strip()
-            text_content = text_content.replace('orig_url', '').strip()
-            if article_text != '':
-              url_yes = True
-              text_content += "\n" + article_text
-              break
-    
-    if not url_yes:
-      if message.reply_to_message.text:
-        reply_to_text = message.reply_to_message.text
-        if bot_details.username in reply_to_text:
-          reply_to_text = reply_to_text.replace(f'@{bot_details.username}', '').strip()
-        if reply_to_text:
-          text_content += "\n" + reply_to_text
-      elif message.reply_to_message.caption:
-        text_content += "\n" + message.reply_to_message.caption
 
   if not text_content:
     return
